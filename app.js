@@ -3,26 +3,33 @@ const sqlite3 = require('sqlite3').verbose();
 const express = require('express');
 const crypto = require('crypto');
 const { Telegraf, Scenes, session } = require('telegraf');
+const topUpQueue = require('./queue');
+//const { initGenerateBug } = require('./generate');
+
 
 const app = express();
 const axios = require('axios');
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const { createssh, createvmess, createvless, createtrojan, createshadowsocks } = require('./modules/create');
-const { renewssh, renewvmess, renewvless, renewtrojan, renewshadowsocks } = require('./modules/renew');
+const { createssh, createvmess, createvless, createtrojan } = require('./modules/create');
+const { trialssh, trialvmess, trialvless, trialtrojan } = require('./modules/trial');
+const { renewssh, renewvmess, renewvless, renewtrojan } = require('./modules/renew');
 
 const fs = require('fs');
 const vars = JSON.parse(fs.readFileSync('./.vars.json', 'utf8'));
 
-const PAYDISINI_KEY = vars.PAYDISINI_KEY;
-const BOT_TOKEN = vars.BOT_TOKEN;
-const port = vars.PORT || 50123;
-const ADMIN = vars.USER_ID; 
-const NAMA_STORE = vars.NAMA_STORE || '@NEWBIESTORE';
+const PAYDISINI_KEY = vars.PAYDISINI_KEY; // Sudah di-set di VPS
+const BOT_TOKEN = vars.BOT_TOKEN; // Sudah di-set di VPS
+const port = vars.PORT || 50123; // Sudah di-set di VPS
+const ADMIN = vars.USER_ID; // Sudah di-set di VPS
+const NAMA_STORE = vars.NAMA_STORE || '@Kedai_vpn'; // Sudah di-set di VPS
+const GROUP_ID = "-1002198385289"; // Tambahkan grup ID di sini
 const bot = new Telegraf(BOT_TOKEN, {
     handlerTimeout: 180_000 
 });
+
+
 const adminIds = ADMIN;
 console.log('Bot initialized');
 
@@ -39,6 +46,7 @@ db.run(`CREATE TABLE IF NOT EXISTS Server (
   domain TEXT,
   auth TEXT,
   harga INTEGER,
+  harga_reseller INTEGER,
   nama_server TEXT,
   quota INTEGER,
   iplimit INTEGER,
@@ -55,7 +63,17 @@ db.run(`CREATE TABLE IF NOT EXISTS Server (
 db.run(`CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER UNIQUE,
+  username TEXT,
   saldo INTEGER DEFAULT 0,
+  role TEXT DEFAULT 'member',
+  last_topup_date TEXT,
+  transaction_count INTEGER DEFAULT 0,
+  total_accounts_created INTEGER DEFAULT 0,
+  last_account_creation_date TEXT,
+  last_transaction_date TEXT,
+  accounts_created_30days INTEGER DEFAULT 0,
+  trial_count INTEGER DEFAULT 0, 
+  last_trial_date TEXT DEFAULT NULL,
   CONSTRAINT unique_user_id UNIQUE (user_id)
 )`, (err) => {
   if (err) {
@@ -65,34 +83,514 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
   }
 });
 
+
+ensureUserTableColumns();
 const userState = {};
 console.log('User state initialized');
 
+const userSessions = {}; // Simpan message_id terakhir untuk setiap user
+
+const userMessages = {}; // Menyimpan message_id terakhir untuk setiap user
+
+async function ensureUserTableColumns() {
+  const expectedColumns = {
+    username: "TEXT",
+    role: "TEXT DEFAULT 'member'",
+    last_topup_date: "TEXT",
+    transaction_count: "INTEGER DEFAULT 0",
+    total_accounts_created: "INTEGER DEFAULT 0",
+    last_account_creation_date: "TEXT",
+    last_transaction_date: "TEXT",
+    accounts_created_30days: "INTEGER DEFAULT 0",
+    trial_count: "INTEGER DEFAULT 0",
+    last_trial_date: "TEXT DEFAULT NULL"
+  };
+
+  db.all(`PRAGMA table_info(users);`, (err, rows) => {
+    if (err) return console.error('Gagal membaca struktur tabel users:', err);
+
+    const existingColumns = rows.map(row => row.name);
+
+    for (const [column, definition] of Object.entries(expectedColumns)) {
+      if (!existingColumns.includes(column)) {
+        const alterSQL = `ALTER TABLE users ADD COLUMN ${column} ${definition}`;
+        db.run(alterSQL, (err) => {
+          if (err) {
+            console.error(`Gagal menambahkan kolom ${column}:`, err.message);
+          } else {
+            console.log(`✅ Kolom '${column}' berhasil ditambahkan ke tabel users`);
+          }
+        });
+      }
+    }
+  });
+}
+
 bot.command(['start', 'menu'], async (ctx) => {
   console.log('Start or Menu command received');
-  
+
   const userId = ctx.from.id;
-  db.get('SELECT * FROM users WHERE user_id = ?', [userId], (err, row) => {
-    if (err) {
-      console.error('Kesalahan saat memeriksa user_id:', err.message);
+  const username = ctx.from.username ? ctx.from.username : "Tidak ada username";
+
+  // Hapus pesan lama jika ada
+  if (userMessages[userId]) {
+    try {
+      await ctx.telegram.deleteMessage(ctx.chat.id, userMessages[userId]);
+      console.log(`Pesan lama (${userMessages[userId]}) dihapus untuk user ${userId}`);
+    } catch (error) {
+      console.warn(`Gagal menghapus pesan lama: ${error.message}`);
+    }
+  }
+
+  // Simpan atau update data pengguna
+  db.serialize(() => {
+       // Coba insert user baru, jika sudah ada, abaikan (INSERT OR IGNORE)
+       db.run(
+         'INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)',
+         [userId, username],
+         (err) => {
+           if (err) {
+             console.error('Kesalahan saat menyimpan user:', err.message);
+           } else {
+             console.log(`User ID ${userId} berhasil disimpan atau sudah ada.`);
+           }
+         }
+       );
+
+       // Update username jika NULL atau berbeda
+       db.run(
+         `UPDATE users 
+          SET username = ? 
+          WHERE user_id = ? 
+          AND (username IS NULL OR username != ?)`,
+         [username, userId, username],
+         (err) => {
+           if (err) {
+             console.error('Kesalahan saat mengupdate username:', err.message);
+           } else {
+             console.log(`Username untuk User ID ${userId} berhasil diupdate (jika diperlukan).`);
+           }
+         }
+       );
+     });
+
+  // Kirim pesan menu (seperti sebelumnya)
+  const jumlahServer = await getJumlahServer();
+  const jumlahPengguna = await getJumlahPengguna();
+
+  const keyboard = [
+    [
+      { text: 'CARA TOPUP', url: 'https://t.me/internetgratisin/21' },
+    ],
+    [
+      { text: 'CARA GENERATE BUG', url: 'https://t.me/internetgratisin/22' },
+      { text: 'CARA CONVERT YAML', url: 'https://t.me/internetgratisin/47' },
+    ],
+    [
+      { text: 'CARA ORDER', url: 'https://t.me/internetgratisin/23' },
+      { text: 'CARA RENEW AKUN', url: 'https://t.me/internetgratisin/24' },
+    ],
+    [
+      { text: 'GRUP TELEGRAM', url: 'https://t.me/c/2198385289/1' },
+      { text: 'CHANNEL WHATSAPP', url: 'https://whatsapp.com/channel/0029Vb2qLyuA89MoFnKD4x01' },
+    ],
+    [
+      { text: 'MAIN MENU♻️', callback_data: 'main_menu_refresh' }
+    ]
+  ];
+
+  const messageText = `* ──────────────────────────
+               ≡Kedai_vpn​​​​ ≡
+ ──────────────────────────
+               ⟨ 𝘿𝘼𝙎𝙃𝘽𝙊𝘼𝙍𝘿 𝙏𝙐𝙏𝙊𝙍𝙄𝘼𝙇 ⟩                       
+ ──────────────────────────*
+  selamat Datang *_${username}_*
+ ID anda: *_${userId}_*
+ ──────────────────────────
+Jika sudah paham
+Bisa langsung ke MainMenu♻️
+──────────────────────────
+🟢 𝙅𝙄𝙆𝘼 𝙄𝙉𝙂𝙄𝙉 𝙍𝙀𝙎𝙀𝙇𝙇𝙀𝙍 𝙏𝙊𝙋𝙐𝙋
+𝙈𝙄𝙉𝙄𝙈𝘼𝙇 25000
+𝘿𝙄𝙎𝙆𝙊𝙉 50% 𝘿𝘼𝙍𝙄 𝙃𝘼𝙍𝙂𝘼 𝙉𝙊𝙍𝙈𝘼𝙇
+──────────────────────────
+Lɪsᴛ Hᴀʀɢᴀ Sᴇʀᴠᴇʀ Tᴇʀᴍᴜʀᴀʜ✴️
+SGDO 🇸🇬    : 134/Hari reseller
+SGDO 🇸🇬    : 267/Hari member
+INDO  🇮🇩    : 200/Hari reseller
+INDO  🇮🇩    : 334/Hari member
+
+──────────────────────────
+๑۞๑ KESULITAN❓
+*𝘾𝙃𝘼𝙏 𝙒𝙉𝙀𝙍 @Kedai_vpn*
+☏ [WhatsApp](https://wa.me/6287777694482)
+ ──────────────────────────
+*Sɪʟᴀᴋᴀɴ ᴘɪʟɪʜ ᴏᴘsɪ ʟᴀʏᴀɴᴀɴ:*`;
+
+  try {
+    const sentMessage = await ctx.reply(messageText, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    });
+
+    // Simpan message_id baru untuk nanti dihapus saat /menu dipanggil lagi
+    userMessages[userId] = sentMessage.message_id;
+    console.log(`Pesan baru disimpan dengan ID: ${sentMessage.message_id}`);
+  } catch (error) {
+    console.error('Error saat mengirim menu utama:', error);
+  }
+});
+
+async function getUserSaldo(userId) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      'SELECT saldo FROM users WHERE user_id = ?',
+      [userId],
+      (err, row) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(row ? row.saldo : 0);
+        }
+      }
+    );
+  });
+}
+
+// Fungsi untuk mendapatkan jumlah server
+async function getJumlahServer() {
+  // Implementasi query ke database atau sumber data lainnya
+  return 10; // Contoh nilai
+}
+
+// Fungsi untuk mendapatkan jumlah pengguna
+async function getJumlahPengguna() {
+  // Implementasi query ke database atau sumber data lainnya
+  return 100; // Contoh nilai
+}
+
+const resetAccountsCreated30Days = async () => {
+  try {
+    const currentDate = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+    await new Promise((resolve, reject) => {
+      db.run(
+        'UPDATE users SET accounts_created_30days = 0 WHERE last_account_creation_date < DATE(?, "-30 days")',
+        [currentDate],
+        (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        }
+      );
+    });
+    console.log('✅ Total akun dalam 30 hari telah di-reset untuk pengguna yang memenuhi syarat.');
+  } catch (error) {
+    console.error('🚫 Gagal mereset total akun dalam 30 hari:', error);
+  }
+};
+
+// Jalankan reset setiap 24 jam (untuk memeriksa secara berkala)
+setInterval(resetAccountsCreated30Days, 24 * 60 * 60 * 1000);
+
+async function updateUserAccountCreation(userId) {
+  const currentDate = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+
+  await new Promise((resolve, reject) => {
+    db.run(
+      'UPDATE users SET accounts_created_30days = accounts_created_30days + 1, total_accounts_created = total_accounts_created + 1, last_account_creation_date = ? WHERE user_id = ?',
+      [currentDate, userId],
+      (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      }
+    );
+  });
+}
+
+
+
+async function getAccountCreationRanking() {
+  try {
+    const users = await new Promise((resolve, reject) => {
+      db.all(
+        'SELECT user_id, username, accounts_created_30days FROM users ORDER BY accounts_created_30days DESC LIMIT 3',
+        [],
+        (err, rows) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(rows);
+          }
+        }
+      );
+    });
+
+    if (users.length === 0) {
+      return null; // Tidak ada data ranking
+    }
+
+    return users;
+  } catch (error) {
+    console.error('🚫 Kesalahan saat mengambil data ranking:', error);
+    return null;
+  }
+}
+
+// Fungsi untuk memeriksa dan mengupdate role pengguna berdasarkan transaksi
+async function checkAndUpdateUserRole(userId) {
+  try {
+    // Ambil data pengguna dari database
+    const user = await new Promise((resolve, reject) => {
+      db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(row);
+        }
+      });
+    });
+
+    if (!user) {
+      console.error('🚫 Pengguna tidak ditemukan.');
       return;
     }
 
-    if (row) {
-      console.log(`User ID ${userId} sudah ada di database`);
-    } else {
-      db.run('INSERT INTO users (user_id) VALUES (?)', [userId], (err) => {
-        if (err) {
-          console.error('Kesalahan saat menyimpan user_id:', err.message);
-        } else {
-          console.log(`User ID ${userId} berhasil disimpan`);
-        }
+    const { saldo, role } = user;
+
+    // Jika saldo >= 25.000 dan role bukan reseller, ubah role ke reseller
+    if (saldo >= 25000 && role !== 'reseller') {
+      await new Promise((resolve, reject) => {
+        db.run('UPDATE users SET role = ? WHERE user_id = ?', ['reseller', userId], (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
       });
+
+      console.log(`✅ Role pengguna ${userId} diubah menjadi reseller.`);
+
+      // **Ambil username pengguna**
+      const chat = await bot.telegram.getChat(userId);
+      const username = chat.username ? `@${chat.username}` : `User ID: ${userId}`;
+
+      // **Kirim notifikasi ke pengguna**
+      await bot.telegram.sendMessage(
+        userId,
+        `🎉 *Selamat! Anda sekarang menjadi reseller.*\n\n` +
+        `──────────────────────\n` +
+        `➥ *Role Baru:* Reseller\n` +
+        `➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}\n` +
+        `──────────────────────`,
+        { parse_mode: 'Markdown' }
+      );
+
+      // **Kirim notifikasi ke admin**
+      await bot.telegram.sendMessage(
+        ADMIN,
+        `🎉 *Notifikasi Upgrade Reseller*\n\n` +
+        `──────────────────────\n` +
+        `➥ *Username:* [${username}](tg://user?id=${userId})\n` +
+        `➥ *User ID:* ${userId}\n` +
+        `➥ *Role Baru:* Reseller\n` +
+        `➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}\n` +
+        `──────────────────────`,
+        { parse_mode: 'Markdown' }
+      );
+
+      // **Kirim notifikasi ke grup**
+      await bot.telegram.sendMessage(
+        GROUP_ID,
+        `🎉 *Notifikasi Upgrade Reseller*\n\n` +
+        `──────────────────────\n` +
+        `➥ *Username:* [${username}](tg://user?id=${userId})\n` +
+        `➥ *User ID:* ${userId}\n` +
+        `➥ *Role Baru:* Reseller\n` +
+        `➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}\n` +
+        `──────────────────────`,
+        { parse_mode: 'Markdown' }
+      );
     }
+  } catch (error) {
+    console.error('🚫 Gagal memeriksa dan mengupdate role pengguna:', error);
+  }
+}
+
+
+
+async function sendUserNotificationTopup(userId, amount, uniqueAmount) {
+  const userMessage = `
+──────────────────────
+⟨ STATUS TOPUP SUCCESS ⟩
+──────────────────────
+➥ *Saldo Ditambahkan:* Rp${amount.toLocaleString('id-ID')}
+➥ *Kode Transaksi:* TRX-${Math.floor(100000 + Math.random() * 900000)}
+➥ *Total Pembayaran:* Rp${uniqueAmount.toLocaleString('id-ID')}
+➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}
+──────────────────────
+Terima kasih telah melakukan top-up di Kedai_vpn!
+`;
+
+  try {
+    await bot.telegram.sendMessage(userId, userMessage, { parse_mode: 'Markdown' });
+    console.log(`✅ Notifikasi top-up berhasil dikirim ke pengguna ${userId}`);
+  } catch (error) {
+    console.error('🚫 Gagal mengirim notifikasi top-up ke pengguna:', error.message);
+  }
+}
+
+async function sendAdminNotificationTopup(username, userId, amount, uniqueAmount) {
+  const adminMessage = `
+──────────────────────
+⟨ NOTIFIKASI TOPUP ⟩
+──────────────────────
+➥ *Username:* [${username}](tg://user?id=${userId})
+➥ *User ID:* ${userId}
+➥ *Jumlah Top-up:* Rp${amount.toLocaleString('id-ID')}
+➥ *Kode Transaksi:* TRX-${Math.floor(100000 + Math.random() * 900000)}
+➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}
+──────────────────────
+`;
+
+  try {
+    await bot.telegram.sendMessage(ADMIN, adminMessage, { parse_mode: 'Markdown' });
+    console.log(`✅ Notifikasi top-up berhasil dikirim ke admin`);
+  } catch (error) {
+    console.error('🚫 Gagal mengirim notifikasi top-up ke admin:', error.message);
+  }
+}
+
+async function sendGroupNotificationTopup(username, userId, amount, uniqueAmount) {
+  const groupMessage = `
+──────────────────────
+⟨ NOTIFIKASI TOPUP ⟩
+──────────────────────
+➥ *Username:* [${username}](tg://user?id=${userId})
+➥ *User ID:* ${userId}
+➥ *Jumlah Top-up:* Rp${amount.toLocaleString('id-ID')}
+➥ *Kode Transaksi:* TRX-${Math.floor(100000 + Math.random() * 900000)}
+➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}
+──────────────────────
+`;
+
+  try {
+    await bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'Markdown' });
+    console.log(`✅ Notifikasi top-up berhasil dikirim ke grup`);
+  } catch (error) {
+    console.error('🚫 Gagal mengirim notifikasi top-up ke grup:', error.message);
+  }
+}
+
+// Fungsi untuk mencatat transaksi pengguna
+async function recordUserTransaction(userId) {
+  const currentDate = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+
+  await new Promise((resolve, reject) => {
+    db.run(
+      'UPDATE users SET last_transaction_date = ?, transaction_count = transaction_count + 1 WHERE user_id = ?',
+      [currentDate, userId],
+      (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      }
+    );
   });
 
-  await sendMainMenu(ctx);
-});
+  // 
+}
+
+async function checkAndDowngradeReseller(userId) {
+  try {
+    const user = await new Promise((resolve, reject) => {
+      db.get('SELECT role, last_transaction_date, transaction_count FROM users WHERE user_id = ?', [userId], (err, row) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(row);
+        }
+      });
+    });
+
+    if (!user || user.role !== 'reseller') {
+      return; // Hanya proses untuk reseller
+    }
+
+    const { last_transaction_date, transaction_count } = user;
+
+    // Hitung selisih hari sejak transaksi terakhir
+    const currentDate = new Date();
+    const lastTransactionDate = new Date(last_transaction_date);
+    const diffTime = currentDate - lastTransactionDate;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); // Selisih dalam hari
+
+    // Jika lebih dari 30 hari dan transaksi kurang dari 5, downgrade ke member
+    if (diffDays > 30 && transaction_count < 5) {
+      await new Promise((resolve, reject) => {
+        db.run('UPDATE users SET role = ? WHERE user_id = ?', ['member', userId], (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      console.log(`✅ Role pengguna ${userId} diturunkan ke member.`);
+
+      // Kirim notifikasi ke pengguna
+      await bot.telegram.sendMessage(userId, 'ℹ️ Role Anda telah diturunkan menjadi member karena tidak memenuhi syarat transaksi.', { parse_mode: 'Markdown' });
+
+      // Kirim notifikasi ke admin
+      await bot.telegram.sendMessage(ADMIN, `ℹ️ Pengguna dengan ID ${userId} telah diturunkan ke member.`, { parse_mode: 'Markdown' });
+    }
+  } catch (error) {
+    console.error('🚫 Gagal memeriksa dan menurunkan role reseller:', error);
+  }
+}
+
+
+async function getServerList(userId) {
+  const user = await new Promise((resolve, reject) => {
+    db.get('SELECT role FROM users WHERE user_id = ?', [userId], (err, row) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(row);
+      }
+    });
+  });
+
+  const role = user ? user.role : 'member';
+
+  const servers = await new Promise((resolve, reject) => {
+    db.all('SELECT * FROM Server', [], (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  });
+
+  // Sesuaikan harga berdasarkan role
+  return servers.map(server => ({
+    ...server,
+    harga: role === 'reseller' ? server.harga_reseller : server.harga
+  }));
+}
+
+
 
 bot.command('admin', async (ctx) => {
   console.log('Admin menu requested');
@@ -104,45 +602,95 @@ bot.command('admin', async (ctx) => {
 
   await sendAdminMenu(ctx);
 });
-async function sendMainMenu(ctx) {
+
+bot.action('main_menu_refresh', async (ctx) => {
+  console.log('Tombol MAIN MENU♻️ diklik oleh:', ctx.from.id);
+
+  try {
+    console.log('Mencoba menghapus pesan...');
+    await ctx.deleteMessage();
+    console.log('Pesan berhasil dihapus.');
+  } catch (deleteError) {
+    console.warn('Tidak dapat menghapus pesan:', deleteError.message);
+  }
+
+  try {
+    console.log('Mencoba menampilkan menu utama...');
+    await sendMainMenu(ctx);
+    console.log('Menu utama berhasil ditampilkan.');
+  } catch (menuError) {
+    console.error('Gagal menampilkan menu utama:', menuError);
+    await ctx.reply('🚫 Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi.', { parse_mode: 'Markdown' });
+  }
+});
+
+bot.action('refresh_menu', async (ctx) => {
+  try {
+    // Hapus pesan menu saat ini
+    await ctx.deleteMessage();
+    console.log('Menu dihapus dan akan ditampilkan ulang.');
+
+    // Tampilkan ulang menu utama
+    await sendMainMenu(ctx);
+  } catch (error) {
+    console.error('Gagal menghapus pesan atau menampilkan ulang menu:', error);
+    await ctx.reply('🚫 Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi.', { parse_mode: 'Markdown' });
+  }
+});
+
+
+   async function sendMainMenu(ctx) {
+  const userId = ctx.from.id;
+  const isAdmin = adminIds.includes(userId);
+
   const keyboard = [
     [
-      { text: '➕ Buat Akun', callback_data: 'service_create' },
-      { text: '♻️ Perpanjang Akun', callback_data: 'service_renew' }
+      { text: 'CREATE TRIAL', callback_data: 'service_trial' },
     ],
     [
-      { text: '💰 TopUp Saldo', callback_data: 'topup_saldo' },
-      { text: '💳 Cek Saldo', callback_data: 'cek_saldo' }
+      { text: 'CREATE AKUN', callback_data: 'service_create' },
+      { text: 'RENEW AKUN', callback_data: 'service_renew' }
+    ],
+    [
+      { text: 'TOPUP SALDO [QRIS]', callback_data: 'topup_saldo' },
+    ],
+    [
+      { text: 'REFRESH', callback_data: 'refresh_menu' }
     ],
   ];
 
+  // Add admin buttons if user is admin
+  if (isAdmin) {
+    keyboard.push([
+      { text: '⚙️ ADMIN', callback_data: 'admin_menu' },
+      { text: '💹 CEK SALDO', callback_data: 'cek_saldo_semua' }
+    ]);
+  }
+
   const uptime = os.uptime();
   const days = Math.floor(uptime / (60 * 60 * 24));
-  
+
+  // Get server count
   let jumlahServer = 0;
   try {
     const row = await new Promise((resolve, reject) => {
       db.get('SELECT COUNT(*) AS count FROM Server', (err, row) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row);
-        }
+        if (err) reject(err);
+        else resolve(row);
       });
     });
     jumlahServer = row.count;
   } catch (err) {
     console.error('Kesalahan saat mengambil jumlah server:', err.message);
   }
+
+  // Get user count
   let jumlahPengguna = 0;
   try {
     const row = await new Promise((resolve, reject) => {
       db.get('SELECT COUNT(*) AS count FROM users', (err, row) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row);
-        }
+        if (err) reject(err);
+        else resolve(row);
       });
     });
     jumlahPengguna = row.count;
@@ -150,40 +698,98 @@ async function sendMainMenu(ctx) {
     console.error('Kesalahan saat mengambil jumlah pengguna:', err.message);
   }
 
-  const messageText = `*Selamat datang di ${NAMA_STORE},
-Powered by KEDAI VPN* 🚀
-Bot VPN serba otomatis untuk membeli
-layanan VPN dengan mudah dan cepat
-Nikmati kemudahan dan kecepatan
-dalam layanan VPN dengan bot kami!
+  const username = ctx.from.username ? `@${ctx.from.username}` : "Tidak ada username";
 
-⏳ *Uptime bot:* ${days} Hari
-🌐 *Server tersedia:* ${jumlahServer}
-👥 *Jumlah pengguna:* ${jumlahPengguna}
-
-*Silakan pilih opsi layanan:*`;
-
+  // Get user balance and role
+  let saldo = 0;
+  let role = 'member'; // Default role is 'member'
   try {
-    await ctx.editMessageText(messageText, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: keyboard
-      }
+    const row = await new Promise((resolve, reject) => {
+      db.get('SELECT saldo, role FROM users WHERE user_id = ?', [userId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
     });
+    if (row) {
+      saldo = row.saldo;
+      role = row.role || 'member';
+    }
+  } catch (err) {
+    console.error('Kesalahan saat mengambil saldo atau role pengguna:', err.message);
+  }
+
+ // Get ranking data
+const ranking = await getAccountCreationRanking();
+let rankingText = '';
+if (ranking && ranking.length > 0) {
+  rankingText = ranking.map((user, index) => {
+    if (index === 0) return `🥇 ${user.username}: ${user.accounts_created_30days} akun`;
+    if (index === 1) return `🥈 ${user.username}: ${user.accounts_created_30days} akun`;
+    if (index === 2) return `🥉 ${user.username}: ${user.accounts_created_30days} akun`;
+    return `➥ ${user.username}: ${user.accounts_created_30days} akun`;
+  }).join('\n');
+} else {
+  rankingText = '⚠️ Tidak ada data ranking.';
+}
+
+
+  // Get total accounts in last 30 days and global
+  let totalAkun30Hari = 0;
+  let totalAkunGlobal = 0;
+  try {
+    const row = await new Promise((resolve, reject) => {
+      db.get('SELECT SUM(accounts_created_30days) as total_30days, SUM(total_accounts_created) as total_global FROM users', [], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+    totalAkun30Hari = row.total_30days || 0;
+    totalAkunGlobal = row.total_global || 0;
+  } catch (error) {
+    console.error('🚫 Kesalahan saat mengambil total akun:', error);
+  }
+
+  // Format balance with commas
+  const formattedSaldo = saldo.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+const messageText = `
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+             ≡ <b>KEDAI VPN</b> ≡
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+👋 <b>Selamat Datang</b> <i>${username}</i>
+🆔 <b>ID Anda:</b> <code>${userId}</code>
+⭕ <b>Status:</b> ${role === 'reseller' ? 'Reseller 🛍️' : '👤 Member'}
+💵 <b>Saldo Anda:</b> Rp ${formattedSaldo}
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+📣 <b>INFO RESELLER</b>
+🟢 Minimal Topup: Rp 25.000
+🟢 Diskon 50% dari harga normal!
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+🌐 <b>Server Tersedia:</b> ${jumlahServer}
+👥 <b>Total Pengguna:</b> ${jumlahPengguna}
+📊 <b>Akun (30 Hari):</b> ${totalAkun30Hari}
+🌍 <b>Akun Global:</b> ${totalAkunGlobal}
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+🏆 <b>TOP 3 CREATE AKUN (30 HARI)</b>
+${rankingText}
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+<b>CHAT WNER @Kedai_vpn</b>
+☏ <a href="https://wa.me/6287777694482">WhatsApp</a>
+<b>⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯</b>
+
+Silakan pilih opsi layanan:
+`;
+
+try {
+  await ctx.reply(messageText, {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: keyboard
+    }
+  });
     console.log('Main menu sent');
   } catch (error) {
-    if (error.response && error.response.error_code === 400) {
-      // Jika pesan tidak dapat diedit, kirim pesan baru
-      await ctx.reply(messageText, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: keyboard
-        }
-      });
-      console.log('Main menu sent as new message');
-    } else {
-      console.error('Error saat mengirim menu utama:', error);
-    }
+    console.error('Error saat mengirim menu utama:', error);
   }
 }
 bot.command('helpadmin', async (ctx) => {
@@ -207,6 +813,10 @@ bot.command('helpadmin', async (ctx) => {
 10. /editlimitcreate - Mengedit batas pembuatan akun server.
 11. /edittotalcreate - Mengedit total pembuatan akun server.
 12. /broadcast - Mengirim pesan siaran ke semua pengguna.
+13. /hapussaldo -Menghapus saldo
+14. /listserver - melihat server
+15. /detailserver - melihat detail server
+
 
 Gunakan perintah ini dengan format yang benar untuk menghindari kesalahan.
 `;
@@ -214,18 +824,97 @@ Gunakan perintah ini dengan format yang benar untuk menghindari kesalahan.
   ctx.reply(helpMessage, { parse_mode: 'Markdown' });
 });
 
+// Command untuk admin mengubah role pengguna
+bot.command('changerole', async (ctx) => {
+  const args = ctx.message.text.split(' ');
+  if (args.length < 3) {
+    return ctx.reply('🚫 Format: /changerole <user_id> <new_role>', { parse_mode: 'Markdown' });
+  }
+
+  const targetUserId = args[1];
+  const newRole = args[2];
+
+  if (!['member', 'reseller'].includes(newRole)) {
+    return ctx.reply('🚫 Role tidak valid. Gunakan "member" atau "reseller".', { parse_mode: 'Markdown' });
+  }
+
+  await new Promise((resolve, reject) => {
+    db.run('UPDATE users SET role = ? WHERE user_id = ?', [newRole, targetUserId], (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+
+  await ctx.reply(`✅ Role pengguna dengan ID ${targetUserId} berhasil diubah menjadi ${newRole}.`, { parse_mode: 'Markdown' });
+
+  // Kirim notifikasi ke pengguna
+  try {
+    await ctx.telegram.sendMessage(targetUserId, `🔄 Role Anda telah diubah menjadi ${newRole} oleh admin.`);
+  } catch (error) {
+    console.error('🚫 Gagal mengirim notifikasi ke pengguna:', error);
+  }
+
+  // Kirim notifikasi ke grup
+  const username = await getUsernameById(targetUserId);
+  const groupMessage = `🔄 *Notifikasi Perubahan Role*\n\n` +
+                       `➥ *Username:* [${username}](tg://user?id=${targetUserId})\n` +
+                       `➥ *User ID:* ${targetUserId}\n` +
+                       `➥ *Role Baru:* ${newRole}\n` +
+                       `➥ *Tanggal:* ${new Date().toLocaleString('id-ID')}\n` +
+                       `──────────────────────`;
+
+  try {
+    await bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'Markdown' });
+    console.log(`✅ Notifikasi perubahan role berhasil dikirim ke grup`);
+  } catch (error) {
+    console.error('🚫 Gagal mengirim notifikasi ke grup:', error.message);
+  }
+});
+
+// Command untuk admin melihat daftar pengguna
+bot.command('listusers', async (ctx) => {
+  const users = await new Promise((resolve, reject) => {
+    db.all('SELECT user_id, username, role, saldo, last_transaction_date, transaction_count FROM users', [], (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  });
+
+  if (users.length === 0) {
+    return ctx.reply('⚠️ Tidak ada pengguna yang terdaftar.', { parse_mode: 'Markdown' });
+  }
+
+  let message = '📜 *Daftar Pengguna* 📜\n\n';
+  users.forEach((user, index) => {
+    message += `🔹 ${index + 1}. ID: ${user.user_id}\n` +
+               `   👤 Username: ${user.username || 'Tidak ada'}\n` +
+               `   🎖️ Role: ${user.role}\n` +
+               `   💰 Saldo: Rp ${user.saldo}\n` +
+               `   📅 Transaksi Terakhir: ${user.last_transaction_date || 'Belum ada'}\n` +
+               `   🔢 Jumlah Transaksi: ${user.transaction_count}\n\n`;
+  });
+
+  await ctx.reply(message, { parse_mode: 'Markdown' });
+});
+
 bot.command('ceksaldo', async (ctx) => {
   try {
     const adminId = ctx.from.id;
     if (adminId != ADMIN) {
-      return await ctx.reply('❌ *Anda tidak memiliki izin untuk melihat saldo semua pengguna.*', { parse_mode: 'Markdown' });
+      return await ctx.reply('🚫 *Anda tidak memiliki izin untuk melihat saldo semua pengguna.*', { parse_mode: 'Markdown' });
     }
 
     const users = await new Promise((resolve, reject) => {
       db.all('SELECT user_id, saldo FROM users', [], (err, rows) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil data saldo semua user:', err.message);
-          return reject('❌ *Terjadi kesalahan saat mengambil data saldo semua pengguna.*');
+          console.error('🚫 Kesalahan saat mengambil data saldo semua user:', err.message);
+          return reject('🚫 *Terjadi kesalahan saat mengambil data saldo semua pengguna.*');
         }
         resolve(rows);
       });
@@ -243,9 +932,36 @@ bot.command('ceksaldo', async (ctx) => {
     await ctx.reply(message, { parse_mode: 'Markdown' });
 
   } catch (error) {
-    console.error('❌ Kesalahan saat mengambil saldo semua user:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat mengambil saldo semua user:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
+});
+
+bot.command('upgrade_reseller', async (ctx) => {
+  const userId = ctx.message.from.id;
+  if (!adminIds.includes(userId)) {
+    return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
+  }
+
+  const args = ctx.message.text.split(' ');
+  if (args.length !== 2) {
+    return ctx.reply('⚠️ Format salah. Gunakan: `/upgrade_reseller <user_id>`', { parse_mode: 'Markdown' });
+  }
+
+  const targetUserId = parseInt(args[1]);
+
+  db.run('UPDATE users SET role = "reseller", last_topup_date = ? WHERE user_id = ?', [new Date().toISOString(), targetUserId], function(err) {
+    if (err) {
+      console.error('Kesalahan saat meng-upgrade user ke reseller:', err.message);
+      return ctx.reply('⚠️ Kesalahan saat meng-upgrade user ke reseller.', { parse_mode: 'Markdown' });
+    }
+
+    if (this.changes === 0) {
+      return ctx.reply('⚠️ Pengguna tidak ditemukan.', { parse_mode: 'Markdown' });
+    }
+
+    ctx.reply(`✅ User dengan ID \`${targetUserId}\` berhasil di-upgrade ke reseller.`, { parse_mode: 'Markdown' });
+  });
 });
 
 bot.command('broadcast', async (ctx) => {
@@ -344,6 +1060,33 @@ bot.command('send', async (ctx) => {
     }
 });
 
+bot.action('main_menu', async (ctx) => {
+  if (!ctx || !ctx.match) {
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+  }
+  await sendMainMenu(ctx);
+});
+
+bot.action('admin_menu', async (ctx) => {
+  const userId = ctx.from.id;
+  if (!adminIds.includes(userId)) {
+    await ctx.reply('🚫 Anda tidak memiliki izin untuk mengakses menu admin.');
+    return;
+  }
+
+  await sendAdminMenu(ctx);
+});
+
+bot.action('cek_saldo_semua', async (ctx) => {
+  const userId = ctx.from.id;
+  if (!adminIds.includes(userId)) {
+    await ctx.reply('🚫 Anda tidak memiliki izin untuk melihat saldo semua pengguna.');
+    return;
+  }
+
+  await handleCekSaldoSemua(ctx, userId);
+});
+
 bot.action(/^broadcast_(\d+)_(.+)$/, async (ctx) => {
     const match = ctx.match;
     if (!match) return;
@@ -372,77 +1115,253 @@ async function sendMessageToUser(userId, message, ctx) {
     }
 }
 
+async function getUserRole(userId) {
+  try {
+    const user = await new Promise((resolve, reject) => {
+      db.get('SELECT role FROM users WHERE user_id = ?', [userId], (err, row) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(row);
+        }
+      });
+    });
 
+    console.log(`Role pengguna ${userId}:`, user ? user.role : 'member'); // Log role pengguna
+
+    // Jika role tidak ditemukan, default ke 'member'
+    return user ? user.role : 'member';
+  } catch (error) {
+    console.error('🚫 Error saat mengambil role pengguna:', error);
+    return 'member'; // Default ke 'member' jika terjadi error
+  }
+}
+
+async function sendGroupNotificationPurchase(username, userId, serviceType, serverName, expDays) {
+  // Ambil role pengguna dari database
+  const userRole = await getUserRole(userId);
+
+  // Ambil harga server dari database (sesuai role pengguna)
+  const server = await new Promise((resolve, reject) => {
+    db.get(
+      'SELECT harga, harga_reseller FROM Server WHERE nama_server = ?',
+      [serverName],
+      (err, row) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(row);
+        }
+      }
+    );
+  });
+
+  // Tentukan harga berdasarkan role pengguna
+  const hargaPerHari = userRole === 'reseller' ? server.harga_reseller : server.harga;
+
+  // Hitung total harga berdasarkan masa aktif
+  const totalHarga = hargaPerHari * expDays; // Total harga = harga per hari * masa aktif
+
+  // Format tanggal saat ini
+  const currentDate = new Date().toLocaleString('id-ID');
+
+  const groupMessage = `
+──────────────────────
+⟨ TRX KEDAIVPN BOT ⟩
+──────────────────────
+THANKS TO
+➥ User  : [${username}](tg://user?id=${userId})
+➥ Role  : ${userRole === 'reseller' ? 'Reseller 🛒' : 'Member 👤'}
+──────────────────────
+➥ Layanan : ${serviceType}
+➥ Server : ${serverName}
+➥ Harga per Hari : Rp${hargaPerHari.toLocaleString('id-ID')}
+➥ Masa Aktif : ${expDays} Hari
+➥ Total Harga : Rp${totalHarga.toLocaleString('id-ID')}
+➥ Tanggal : ${currentDate}
+──────────────────────
+Notifikasi Pembelian detail di bawah.
+`;
+
+  try {
+    await bot.telegram.sendMessage(GROUP_ID, groupMessage, { parse_mode: 'Markdown' });
+    console.log(`✅ Notifikasi pembelian berhasil dikirim ke grup untuk user ${username}`);
+  } catch (error) {
+    console.error('🚫 Gagal mengirim notifikasi pembelian ke grup:', error.message);
+  }
+}
 
 bot.command('addsaldo', async (ctx) => {
   const userId = ctx.message.from.id;
   if (!adminIds.includes(userId)) {
-      return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
+    return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
   }
 
   const args = ctx.message.text.split(' ');
   if (args.length !== 3) {
-      return ctx.reply('⚠️ Format salah. Gunakan: `/addsaldo <user_id> <jumlah>`', { parse_mode: 'Markdown' });
+    return ctx.reply('⚠️ Format salah. Gunakan: `/addsaldo <user_id> <jumlah>`', { parse_mode: 'Markdown' });
   }
 
   const targetUserId = parseInt(args[1]);
   const amount = parseInt(args[2]);
 
   if (isNaN(targetUserId) || isNaN(amount)) {
-      return ctx.reply('⚠️ `user_id` dan `jumlah` harus berupa angka.', { parse_mode: 'Markdown' });
+    return ctx.reply('⚠️ `user_id` dan `jumlah` harus berupa angka.', { parse_mode: 'Markdown' });
   }
 
-  if (/\s/.test(args[1]) || /\./.test(args[1]) || /\s/.test(args[2]) || /\./.test(args[2])) {
-      return ctx.reply('⚠️ `user_id` dan `jumlah` tidak boleh mengandung spasi atau titik.', { parse_mode: 'Markdown' });
+  if (amount < 0) {
+    return ctx.reply('⚠️ Jumlah saldo tidak boleh negatif.', { parse_mode: 'Markdown' });
   }
 
-  db.get("SELECT * FROM users WHERE user_id = ?", [targetUserId], (err, row) => {
+  try {
+    // Tambahkan saldo ke pengguna
+    db.run('UPDATE users SET saldo = saldo + ? WHERE user_id = ?', [amount, targetUserId], async (err) => {
       if (err) {
-          console.error('⚠️ Kesalahan saat memeriksa `user_id`:', err.message);
-          return ctx.reply('⚠️ Kesalahan saat memeriksa `user_id`.', { parse_mode: 'Markdown' });
+        console.error('Kesalahan saat menambahkan saldo:', err.message);
+        return ctx.reply('⚠️ Kesalahan saat menambahkan saldo.', { parse_mode: 'Markdown' });
       }
 
-      if (!row) {
-          return ctx.reply('⚠️ `user_id` tidak terdaftar.', { parse_mode: 'Markdown' });
+      // Cek dan upgrade ke reseller jika saldo >= 25.000
+      if (amount >= 25000) {
+        await checkAndUpdateUserRole(targetUserId);
       }
 
-      db.run("UPDATE users SET saldo = saldo + ? WHERE user_id = ?", [amount, targetUserId], function(err) {
-          if (err) {
-              console.error('⚠️ Kesalahan saat menambahkan saldo:', err.message);
-              return ctx.reply('⚠️ Kesalahan saat menambahkan saldo.', { parse_mode: 'Markdown' });
-          }
+      // Notifikasi ke pengguna
+      await ctx.telegram.sendMessage(targetUserId, `✅ Saldo sebesar Rp${amount} telah ditambahkan ke akun Anda.`, { parse_mode: 'Markdown' });
 
-          if (this.changes === 0) {
-              return ctx.reply('⚠️ Pengguna tidak ditemukan.', { parse_mode: 'Markdown' });
-          }
+      // Notifikasi ke admin
+      await ctx.reply(`✅ Saldo sebesar Rp${amount} berhasil ditambahkan ke user dengan ID ${targetUserId}.`, { parse_mode: 'Markdown' });
 
-          ctx.reply(`✅ Saldo sebesar \`${amount}\` berhasil ditambahkan untuk \`user_id\` \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
-      });
-  });
+      // Notifikasi ke grup
+      const username = await getUsernameById(targetUserId);
+      await sendGroupNotificationTopup(username, targetUserId, amount, amount);
+    });
+  } catch (error) {
+    console.error('🚫 Kesalahan saat menambahkan saldo:', error);
+    await ctx.reply('🚫 Terjadi kesalahan saat menambahkan saldo.', { parse_mode: 'Markdown' });
+  }
 });
-bot.command('addserver', async (ctx) => {
+
+bot.command('hapusserver', async (ctx) => {
   const userId = ctx.message.from.id;
   if (!adminIds.includes(userId)) {
-      return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
+    return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
   }
 
   const args = ctx.message.text.split(' ');
-  if (args.length !== 7) {
-      return ctx.reply('⚠️ Format salah. Gunakan: `/addserver <domain> <auth> <harga> <nama_server> <quota> <iplimit> <batas_create_account>`', { parse_mode: 'Markdown' });
+  if (args.length !== 2) {
+    return ctx.reply('⚠️ Format salah. Gunakan: `/hapusserver <server_id>`', { parse_mode: 'Markdown' });
   }
 
-  const [domain, auth, harga, nama_server, quota, iplimit, batas_create_akun] = args.slice(1);
+  const serverId = parseInt(args[1]);
+
+  if (isNaN(serverId)) {
+    return ctx.reply('⚠️ `server_id` harus berupa angka.', { parse_mode: 'Markdown' });
+  }
+
+  db.run('DELETE FROM Server WHERE id = ?', [serverId], function(err) {
+    if (err) {
+      console.error('⚠️ Kesalahan saat menghapus server:', err.message);
+      return ctx.reply('⚠️ Kesalahan saat menghapus server.', { parse_mode: 'Markdown' });
+    }
+
+    if (this.changes === 0) {
+      return ctx.reply('⚠️ Server tidak ditemukan.', { parse_mode: 'Markdown' });
+    }
+
+    ctx.reply(`✅ Server dengan ID \`${serverId}\` berhasil dihapus.`, { parse_mode: 'Markdown' });
+  });
+});
+
+bot.command('listserver', async (ctx) => {
+  try {
+    const servers = await new Promise((resolve, reject) => {
+      db.all('SELECT id, nama_server FROM Server', [], (err, servers) => {
+        if (err) {
+          console.error('⚠️ Kesalahan saat mengambil daftar server:', err.message);
+          return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar server.*');
+        }
+        resolve(servers);
+      });
+    });
+
+    if (servers.length === 0) {
+      return ctx.reply('⚠️ *PERHATIAN! Tidak ada server yang tersedia saat ini.*', { parse_mode: 'Markdown' });
+    }
+
+    let serverList = '📜 *Daftar Server* 📜\n\n';
+    servers.forEach((server, index) => {
+      serverList += `🔹 ${index + 1}. ${server.nama_server} (ID: ${server.id})\n`;
+    });
+
+    serverList += `\nTotal Jumlah Server: ${servers.length}`;
+
+    await ctx.reply(serverList, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error('⚠️ Kesalahan saat mengambil daftar server:', error);
+    await ctx.reply('⚠️ *Terjadi kesalahan saat mengambil daftar server.*', { parse_mode: 'Markdown' });
+  }
+});
+
+bot.command('detailserver', async (ctx) => {
+  try {
+    const servers = await new Promise((resolve, reject) => {
+      db.all('SELECT * FROM Server', [], (err, servers) => {
+        if (err) {
+          console.error('⚠️ Kesalahan saat mengambil detail server:', err.message);
+          return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil detail server.*');
+        }
+        resolve(servers);
+      });
+    });
+
+    if (servers.length === 0) {
+      return ctx.reply('⚠️ *PERHATIAN! Tidak ada server yang tersedia saat ini.*', { parse_mode: 'Markdown' });
+    }
+
+    const buttons = servers.map(server => ({
+      text: `${server.nama_server} (ID: ${server.id})`,
+      callback_data: `server_detail_${server.id}`
+    }));
+
+    const inlineKeyboard = [];
+    for (let i = 0; i < buttons.length; i += 2) {
+      inlineKeyboard.push(buttons.slice(i, i + 2));
+    }
+
+    await ctx.reply('📋 *Silakan pilih server untuk melihat detail:*', {
+      reply_markup: { inline_keyboard: inlineKeyboard },
+      parse_mode: 'Markdown'
+    });
+  } catch (error) {
+    console.error('⚠️ Kesalahan saat mengambil detail server:', error);
+    await ctx.reply('⚠️ *Terjadi kesalahan saat mengambil detail server.*', { parse_mode: 'Markdown' });
+  }
+});
+
+bot.command('addserver', async (ctx) => {
+  const userId = ctx.message.from.id;
+  if (!adminIds.includes(userId)) {
+    return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
+  }
+
+  const args = ctx.message.text.split(' ');
+  if (args.length !== 8) {
+    return ctx.reply('⚠️ Format salah. Gunakan: `/addserver <domain> <auth> <harga> <harga_reseller> <nama_server> <quota> <iplimit> <batas_create_akun>`', { parse_mode: 'Markdown' });
+  }
+
+  const [domain, auth, harga, harga_reseller, nama_server, quota, iplimit, batas_create_akun] = args.slice(1);
 
   const numberOnlyRegex = /^\d+$/;
-  if (!numberOnlyRegex.test(harga) || !numberOnlyRegex.test(quota) || !numberOnlyRegex.test(iplimit) || !numberOnlyRegex.test(batas_create_akun)) {
-      return ctx.reply('⚠️ `harga`, `quota`, `iplimit`, dan `batas_create_akun` harus berupa angka.', { parse_mode: 'Markdown' });
+  if (!numberOnlyRegex.test(harga) || !numberOnlyRegex.test(harga_reseller) || !numberOnlyRegex.test(quota) || !numberOnlyRegex.test(iplimit) || !numberOnlyRegex.test(batas_create_akun)) {
+    return ctx.reply('⚠️ `harga`, `harga_reseller`, `quota`, `iplimit`, dan `batas_create_akun` harus berupa angka.', { parse_mode: 'Markdown' });
   }
 
-  db.run("INSERT INTO Server (domain, auth, harga, nama_server, quota, iplimit, batas_create_akun) VALUES (?, ?, ?, ?, ?, ?, ?)", 
-      [domain, auth, parseInt(harga), nama_server, parseInt(quota), parseInt(iplimit), parseInt(batas_create_akun)], function(err) {
+  db.run("INSERT INTO Server (domain, auth, harga, harga_reseller, nama_server, quota, iplimit, batas_create_akun) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
+    [domain, auth, parseInt(harga), parseInt(harga_reseller), nama_server, parseInt(quota), parseInt(iplimit), parseInt(batas_create_akun)], function(err) {
       if (err) {
-          console.error('⚠️ Kesalahan saat menambahkan server:', err.message);
-          return ctx.reply('⚠️ Kesalahan saat menambahkan server.', { parse_mode: 'Markdown' });
+        console.error('⚠️ Kesalahan saat menambahkan server:', err.message);
+        return ctx.reply('⚠️ Kesalahan saat menambahkan server.', { parse_mode: 'Markdown' });
       }
 
       ctx.reply(`✅ Server \`${nama_server}\` berhasil ditambahkan.`, { parse_mode: 'Markdown' });
@@ -662,6 +1581,58 @@ bot.command('editlimitcreate', async (ctx) => {
       ctx.reply(`✅ Batas create akun server \`${domain}\` berhasil diubah menjadi \`${batas_create_akun}\`.`, { parse_mode: 'Markdown' });
   });
 });
+bot.command('hapussaldo', async (ctx) => {
+  const userId = ctx.message.from.id;
+  if (!adminIds.includes(userId)) {
+    return ctx.reply('⚠️ Anda tidak memiliki izin untuk menggunakan perintah ini.', { parse_mode: 'Markdown' });
+  }
+
+  const args = ctx.message.text.split(' ');
+  if (args.length !== 3) {
+    return ctx.reply('⚠️ Format salah. Gunakan: `/hapussaldo <user_id> <jumlah>`', { parse_mode: 'Markdown' });
+  }
+
+  const targetUserId = parseInt(args[1]);
+  const amount = parseInt(args[2]);
+
+  if (isNaN(targetUserId) || isNaN(amount)) {
+    return ctx.reply('⚠️ `user_id` dan `jumlah` harus berupa angka.', { parse_mode: 'Markdown' });
+  }
+
+  if (amount <= 0) {
+    return ctx.reply('⚠️ Jumlah saldo yang dihapus harus lebih besar dari 0.', { parse_mode: 'Markdown' });
+  }
+
+  db.get("SELECT * FROM users WHERE user_id = ?", [targetUserId], (err, row) => {
+    if (err) {
+      console.error('⚠️ Kesalahan saat memeriksa `user_id`:', err.message);
+      return ctx.reply('⚠️ Kesalahan saat memeriksa `user_id`.', { parse_mode: 'Markdown' });
+    }
+
+    if (!row) {
+      return ctx.reply('⚠️ `user_id` tidak terdaftar.', { parse_mode: 'Markdown' });
+    }
+
+    if (row.saldo < amount) {
+      return ctx.reply('⚠️ Saldo pengguna tidak mencukupi untuk dihapus.', { parse_mode: 'Markdown' });
+    }
+
+    db.run("UPDATE users SET saldo = saldo - ? WHERE user_id = ?", [amount, targetUserId], function(err) {
+      if (err) {
+        console.error('⚠️ Kesalahan saat menghapus saldo:', err.message);
+        return ctx.reply('⚠️ Kesalahan saat menghapus saldo.', { parse_mode: 'Markdown' });
+      }
+
+      if (this.changes === 0) {
+        return ctx.reply('⚠️ Pengguna tidak ditemukan.', { parse_mode: 'Markdown' });
+      }
+
+      ctx.reply(`✅ Saldo sebesar \`${amount}\` berhasil dihapus dari \`user_id\` \`${targetUserId}\`.`, { parse_mode: 'Markdown' });
+    });
+  });
+});
+
+
 bot.command('edittotalcreate', async (ctx) => {
   const userId = ctx.message.from.id;
   if (!adminIds.includes(userId)) {
@@ -692,33 +1663,49 @@ bot.command('edittotalcreate', async (ctx) => {
       ctx.reply(`✅ Total create akun server \`${domain}\` berhasil diubah menjadi \`${total_create_akun}\`.`, { parse_mode: 'Markdown' });
   });
 });
+
+//initGenerateBug(bot);
+
 async function handleServiceAction(ctx, action) {
   let keyboard;
-  if (action === 'create') {
+    if (action === 'trial') {
     keyboard = [
       [
-	  { text: 'Buat Ssh/Ovpn', callback_data: 'create_ssh' },      
-      { text: 'Buat Vmess', callback_data: 'create_vmess' }
-	  ],
+        { text: 'SSH', callback_data: 'trial_ssh' },
+        { text: 'VMESS', callback_data: 'trial_vmess' }
+      ],
       [
-	  { text: 'Buat Vless', callback_data: 'create_vless' },
-      { text: 'Buat Trojan', callback_data: 'create_trojan' }
-	  ],
-      [{ text: '🔙 Kembali', callback_data: 'send_main_menu' }]
+        { text: 'VLESS', callback_data: 'trial_vless' },
+        { text: 'TROJAN', callback_data: 'trial_trojan' }
+      ],
+      [{ text: 'KEMBALI', callback_data: 'kembali' }] // Tombol Kembali
+    ]; 
+  } else if (action === 'create') {
+    keyboard = [
+      [
+        { text: 'SSH', callback_data: 'create_ssh' },
+        { text: 'VMESS', callback_data: 'create_vmess' }
+      ],
+      [
+        { text: 'VLESS', callback_data: 'create_vless' },
+        { text: 'TROJAN', callback_data: 'create_trojan' }
+      ],
+      [{ text: 'KEMBALI', callback_data: 'kembali' }] // Tombol Kembali
     ];
   } else if (action === 'renew') {
     keyboard = [
       [
-	  { text: 'Perpanjang Ssh/Ovpn', callback_data: 'renew_ssh' },      
-      { text: 'Perpanjang Vmess', callback_data: 'renew_vmess' }
-	  ],
+        { text: 'RENEW SSH', callback_data: 'renew_ssh' },
+        { text: 'RENEW VMESS', callback_data: 'renew_vmess' }
+      ],
       [
-	  { text: 'Perpanjang Vless', callback_data: 'renew_vless' },
-      { text: 'Perpanjang Trojan', callback_data: 'renew_trojan' }
-	  ],
-      [{ text: '🔙 Kembali', callback_data: 'send_main_menu' }]
+        { text: 'RENEW VLESS', callback_data: 'renew_vless' },
+        { text: 'RENEW TROJAN', callback_data: 'renew_trojan' }
+      ],
+      [{ text: '🔙 Kembali', callback_data: 'kembali' }] // Tombol Kembali
     ];
-  } 
+  }
+
   try {
     await ctx.editMessageReplyMarkup({
       inline_keyboard: keyboard
@@ -738,18 +1725,39 @@ async function handleServiceAction(ctx, action) {
     }
   }
 }
+
+bot.action('kembali', async (ctx) => {
+  console.log('Tombol Kembali diklik oleh:', ctx.from.id);
+
+  try {
+    // Coba hapus pesan menu saat ini
+    try {
+      await ctx.deleteMessage();
+      console.log('Pesan menu dihapus.');
+    } catch (deleteError) {
+      console.warn('Tidak dapat menghapus pesan:', deleteError.message);
+      // Jika pesan tidak dapat dihapus, lanjutkan tanpa menghapus
+    }
+
+    // Tampilkan menu utama
+    await sendMainMenu(ctx);
+  } catch (error) {
+    console.error('Gagal memproses permintaan:', error);
+    await ctx.reply('🚫 Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi.', { parse_mode: 'Markdown' });
+  }
+});
 async function sendAdminMenu(ctx) {
   const adminKeyboard = [
     [
       { text: '➕ Tambah Server', callback_data: 'addserver' },
-      { text: '❌ Hapus Server', callback_data: 'deleteserver' }
+      { text: '🚫 Hapus Server', callback_data: 'deleteserver' }
     ],
     [
       { text: '💲 Edit Harga', callback_data: 'editserver_harga' },
       { text: '📝 Edit Nama', callback_data: 'nama_server_edit' }
     ],
     [
-      { text: '🌐 Edit Domain', callback_data: 'editserver_domain' },
+      { text: '🌍 Edit Domain', callback_data: 'editserver_domain' },
       { text: '🔑 Edit Auth', callback_data: 'editserver_auth' }
     ],
     [
@@ -769,7 +1777,7 @@ async function sendAdminMenu(ctx) {
       { text: 'ℹ️ Detail Server', callback_data: 'detailserver' }
     ],
     [
-      { text: '🔙 Kembali', callback_data: 'send_main_menu' }
+      { text: '🔙 Kembali ke Main Menu', callback_data: 'send_main_menu' }
     ]
   ];
 
@@ -793,94 +1801,148 @@ async function sendAdminMenu(ctx) {
   }
 }
 
+bot.action('send_main_menu', async (ctx) => {
+  console.log('Tombol Kembali ke Menu Utama diklik oleh:', ctx.from.id);
 
+  try {
+    // Coba hapus pesan menu saat ini
+    try {
+      await ctx.deleteMessage();
+      console.log('Pesan menu dihapus.');
+    } catch (deleteError) {
+      console.warn('Tidak dapat menghapus pesan:', deleteError.message);
+      // Jika pesan tidak dapat dihapus, lanjutkan tanpa menghapus
+    }
+
+    // Tampilkan menu utama
+    await sendMainMenu(ctx);
+  } catch (error) {
+    console.error('Gagal memproses permintaan:', error);
+    await ctx.reply('🚫 Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi.', { parse_mode: 'Markdown' });
+  }
+});
 bot.action('service_create', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await handleServiceAction(ctx, 'create');
 });
 
+bot.action('service_trial', async (ctx) => {
+  if (!ctx || !ctx.match) {
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+  }
+  await handleServiceAction(ctx, 'trial');
+})
+
 bot.action('service_renew', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await handleServiceAction(ctx, 'renew');
 });
 
 bot.action('send_main_menu', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await sendMainMenu(ctx);
 });
 
 bot.action('create_vmess', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'create', 'vmess');
 });
 
 bot.action('create_vless', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'create', 'vless');
 });
 
 bot.action('create_trojan', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'create', 'trojan');
 });
 
 bot.action('create_shadowsocks', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'create', 'shadowsocks');
 });
 
 bot.action('create_ssh', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'create', 'ssh');
 });
 
+bot.action('trial_vmess', async (ctx) => {
+  if (!ctx || !ctx.match) {
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+  }
+  await startSelectServer(ctx, 'trial', 'vmess');
+});
+
+bot.action('trial_vless', async (ctx) => {
+  if (!ctx || !ctx.match) {
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+  }
+  await startSelectServer(ctx, 'trial', 'vless');
+});
+
+bot.action('trial_trojan', async (ctx) => {
+  if (!ctx || !ctx.match) {
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+  }
+  await startSelectServer(ctx, 'trial', 'trojan');
+});
+
+bot.action('trial_ssh', async (ctx) => {
+  if (!ctx || !ctx.match) {
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+  }
+  await startSelectServer(ctx, 'trial', 'ssh');
+});
+
 bot.action('renew_vmess', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'renew', 'vmess');
 });
 
 bot.action('renew_vless', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'renew', 'vless');
 });
 
 bot.action('renew_trojan', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'renew', 'trojan');
 });
 
 bot.action('renew_shadowsocks', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'renew', 'shadowsocks');
 });
 
 bot.action('renew_ssh', async (ctx) => {
   if (!ctx || !ctx.match) {
-    return ctx.reply('❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
+    return ctx.reply('🚫 *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
   await startSelectServer(ctx, 'renew', 'ssh');
 });
@@ -888,86 +1950,98 @@ async function startSelectServer(ctx, action, type, page = 0) {
   try {
     console.log(`Memulai proses ${action} untuk ${type} di halaman ${page + 1}`);
 
-    db.all('SELECT * FROM Server', [], (err, servers) => {
-      if (err) {
-        console.error('⚠️ Error fetching servers:', err.message);
-        return ctx.reply('⚠️ *PERHATIAN!* Tidak ada server yang tersedia saat ini. Coba lagi nanti!', { parse_mode: 'Markdown' });
+    const servers = await getServerList(ctx.from.id);
+
+    if (servers.length === 0) {
+      console.log('Tidak ada server yang tersedia');
+      return ctx.reply('⚠️ *PERHATIAN! Tidak ada server yang tersedia saat ini. Coba lagi nanti!*', { parse_mode: 'Markdown' });
+    }
+
+    const serversPerPage = 6;
+    const totalPages = Math.ceil(servers.length / serversPerPage);
+    const currentPage = Math.min(Math.max(page, 0), totalPages - 1);
+    const start = currentPage * serversPerPage;
+    const end = start + serversPerPage;
+    const currentServers = servers.slice(start, end);
+
+    const keyboard = [];
+    for (let i = 0; i < currentServers.length; i += 2) {
+      const row = [];
+      const server1 = currentServers[i];
+      const server2 = currentServers[i + 1];
+
+      // Jika trial, gunakan callback khusus trial
+      const server1Callback = action === 'trial' 
+        ? `trial_${type}_${server1.id}` 
+        : `${action}_username_${type}_${server1.id}`;
+      
+      row.push({ text: `${server1.nama_server}`, callback_data: server1Callback });
+
+      if (server2) {
+        const server2Callback = action === 'trial' 
+          ? `trial_${type}_${server2.id}` 
+          : `${action}_username_${type}_${server2.id}`;
+
+        row.push({ text: `${server2.nama_server}`, callback_data: server2Callback });
       }
 
-      if (servers.length === 0) {
-        console.log('Tidak ada server yang tersedia');
-        return ctx.reply('⚠️ *PERHATIAN!* Tidak ada server yang tersedia saat ini. Coba lagi nanti!', { parse_mode: 'Markdown' });
+      keyboard.push(row);
+    }
+
+    // Tombol navigasi
+    const navButtons = [];
+    if (totalPages > 1) {
+      if (currentPage > 0) {
+        navButtons.push({ text: '⬅️ Back', callback_data: `navigate_${action}_${type}_${currentPage - 1}` });
       }
-
-      const serversPerPage = 6;
-      const totalPages = Math.ceil(servers.length / serversPerPage);
-      const currentPage = Math.min(Math.max(page, 0), totalPages - 1);
-      const start = currentPage * serversPerPage;
-      const end = start + serversPerPage;
-      const currentServers = servers.slice(start, end);
-
-      const keyboard = [];
-      for (let i = 0; i < currentServers.length; i += 2) {
-        const row = [];
-        const server1 = currentServers[i];
-        const server2 = currentServers[i + 1];
-        const server1Text = `${server1.nama_server}`;
-        row.push({ text: server1Text, callback_data: `${action}_username_${type}_${server1.id}` });
-
-        if (server2) {
-          const server2Text = `${server2.nama_server}`;
-          row.push({ text: server2Text, callback_data: `${action}_username_${type}_${server2.id}` });
-        }
-        keyboard.push(row);
+      if (currentPage < totalPages - 1) {
+        navButtons.push({ text: '➡️ Next', callback_data: `navigate_${action}_${type}_${currentPage + 1}` });
       }
+    }
+    if (navButtons.length > 0) {
+      keyboard.push(navButtons);
+    }
 
-      const navButtons = [];
-      if (totalPages > 1) { 
-        if (currentPage > 0) {
-          navButtons.push({ text: '⬅️ Back', callback_data: `navigate_${action}_${type}_${currentPage - 1}` });
-        }
-        if (currentPage < totalPages - 1) {
-          navButtons.push({ text: '➡️ Next', callback_data: `navigate_${action}_${type}_${currentPage + 1}` });
-        }
-      }
-      if (navButtons.length > 0) {
-        keyboard.push(navButtons);
-      }
-      keyboard.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }]);
+    // Tombol kembali ke menu utama
+    keyboard.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }]);
 
-      const serverList = currentServers.map(server => {
-        const hargaPer30Hari = server.harga * 30; 
-        const isFull = server.total_create_akun >= server.batas_create_akun;
-        return `🌐 *${server.nama_server}*\n` +
-               `💰 Harga per hari: Rp${server.harga}\n` +
-               `📅 Harga per 30 hari: Rp${hargaPer30Hari}\n` +
-               `📊 Quota: ${server.quota}GB\n` +
-               `🔢 Limit IP: ${server.iplimit} IP\n` +
-               (isFull ? `⚠️ *Server Penuh*` : `👥 Total Create Akun: ${server.total_create_akun}/${server.batas_create_akun}`);
-      }).join('\n\n');
+    // Format pesan list server
+    const serverList = currentServers.map(server => {
+      const hargaPer30Hari = server.harga * 30;
+      const isFull = server.total_create_akun >= server.batas_create_akun;
 
-      if (ctx.updateType === 'callback_query') {
-        ctx.editMessageText(`📋 *List Server (Halaman ${currentPage + 1} dari ${totalPages}):*\n\n${serverList}`, {
-          reply_markup: {
-            inline_keyboard: keyboard
-          },
-          parse_mode: 'Markdown'
-        });
-      } else {
-        ctx.reply(`📋 *List Server (Halaman ${currentPage + 1} dari ${totalPages}):*\n\n${serverList}`, {
-          reply_markup: {
-            inline_keyboard: keyboard
-          },
-          parse_mode: 'Markdown'
-        });
-      }
-      userState[ctx.chat.id] = { step: `${action}_username_${type}`, page: currentPage };
+      return `┏━ 🚀 *${server.nama_server}* ━━
+┃ 💰 *Harga*: Rp${server.harga} / hari
+┃ 🏷️ *Harga 30H*: Rp${hargaPer30Hari}
+┃ 📦 *Quota*: ${server.quota}GB
+┃ 🔒 *Limit IP*: ${server.iplimit} IP
+┃ 👤 *Pengguna*: ${server.total_create_akun}/${server.batas_create_akun} ${isFull ? '❌' : '✅'}
+┗━━━━━━━━━━━━━━━━━━━━━━━━━`;
+    }).join('\n\n');
+
+    const messageText = `📌 *List Server (Halaman ${currentPage + 1} dari ${totalPages}):*\n\n${serverList}`;
+
+    // Kirim pesan
+    const sentMessage = await ctx.reply(messageText, {
+      reply_markup: { inline_keyboard: keyboard },
+      parse_mode: 'Markdown'
     });
+
+    // Hapus pesan setelah 30 detik
+    setTimeout(() => {
+      ctx.deleteMessage(sentMessage.message_id);
+    }, 30000);
+
+    // Simpan state hanya untuk create/renew (trial tidak perlu state)
+    if (action !== 'trial') {
+      userState[ctx.chat.id] = { step: `${action}_username_${type}`, page: currentPage };
+    }
   } catch (error) {
-    console.error(`❌ Error saat memulai proses ${action} untuk ${type}:`, error);
-    await ctx.reply(`❌ *GAGAL!* Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.`, { parse_mode: 'Markdown' });
+    console.error(`🚫 Error saat memulai proses ${action} untuk ${type}:`, error);
+    await ctx.reply(`🚫 *GAGAL! Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.*`, { parse_mode: 'Markdown' });
   }
 }
+
 
 bot.action(/navigate_(\w+)_(\w+)_(\d+)/, async (ctx) => {
   const [, action, type, page] = ctx.match;
@@ -982,38 +2056,186 @@ bot.action(/(create|renew)_username_(vmess|vless|trojan|shadowsocks|ssh)_(.+)/, 
   db.get('SELECT batas_create_akun, total_create_akun FROM Server WHERE id = ?', [serverId], async (err, server) => {
     if (err) {
       console.error('⚠️ Error fetching server details:', err.message);
-      return ctx.reply('❌ *Terjadi kesalahan saat mengambil detail server.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Terjadi kesalahan saat mengambil detail server.*', { parse_mode: 'Markdown' });
     }
 
     if (!server) {
-      return ctx.reply('❌ *Server tidak ditemukan.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Server tidak ditemukan.*', { parse_mode: 'Markdown' });
     }
 
     const batasCreateAkun = server.batas_create_akun;
     const totalCreateAkun = server.total_create_akun;
 
     if (totalCreateAkun >= batasCreateAkun) {
-      return ctx.reply('❌ *Server penuh. Tidak dapat membuat akun baru di server ini.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Server penuh. Tidak dapat membuat akun baru di server ini.*', { parse_mode: 'Markdown' });
     }
 
     await ctx.reply('👤 *Masukkan username:*', { parse_mode: 'Markdown' });
   });
 });
+
+bot.action(/trial_(vmess|vless|trojan|shadowsocks|ssh)_(.+)/, async (ctx) => {
+  const type = ctx.match[1];
+  const serverId = ctx.match[2];
+
+  processTrial(ctx, type, serverId);
+});
+
+const ensureColumnsExist = async () => {
+  return new Promise((resolve, reject) => {
+    db.all("PRAGMA table_info(users)", [], (err, rows) => {
+      if (err) {
+        console.error("⚠️ Kesalahan saat mengecek struktur tabel:", err.message);
+        return reject(err);
+      }
+
+      const columns = rows.map(row => row.name);
+      const queries = [];
+
+      if (!columns.includes('trial_count')) {
+        queries.push("ALTER TABLE users ADD COLUMN trial_count INTEGER DEFAULT 0;");
+      }
+      if (!columns.includes('last_trial_date')) {
+        queries.push("ALTER TABLE users ADD COLUMN last_trial_date TEXT DEFAULT NULL;");
+      }
+
+      if (queries.length === 0) {
+        return resolve(); // Tidak ada perubahan
+      }
+
+      // Eksekusi ALTER TABLE secara berurutan untuk menghindari error
+      (async () => {
+        for (const query of queries) {
+          try {
+            await new Promise((res, rej) => {
+              db.run(query, (err) => {
+                if (err) {
+                  console.error("⚠️ Gagal menambahkan kolom:", err.message);
+                  rej(err);
+                } else {
+                  console.log(`✅ Berhasil menjalankan: ${query}`);
+                  res();
+                }
+              });
+            });
+          } catch (error) {
+            return reject(error);
+          }
+        }
+        resolve();
+      })();
+    });
+  });
+};
+
+const getUserData = async (userId) => {
+  await ensureColumnsExist(); // Pastikan kolom sudah ada sebelum query
+  return new Promise((resolve, reject) => {
+    db.get('SELECT trial_count, last_trial_date FROM users WHERE user_id = ?', [userId], (err, user) => {
+      if (err) {
+        console.error('⚠️ Kesalahan saat mengambil data user:', err.message);
+        reject(err);
+      } else {
+        resolve(user || null);
+      }
+    });
+  });
+};
+
+const updateTrialCount = (userId, today) => {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'UPDATE users SET trial_count = trial_count + 1, last_trial_date = ? WHERE user_id = ?',
+      [today, userId],
+      (err) => {
+        if (err) {
+          console.error('⚠️ Kesalahan saat memperbarui trial count:', err.message);
+          reject(err);
+        } else {
+          resolve();
+        }
+      }
+    );
+  });
+};
+
+async function processTrial(ctx, type, serverId) {
+  const userId = ctx.from.id;
+  const today = new Date().toISOString().split('T')[0];
+
+  try {
+    let user = await getUserData(userId);
+    let trialCount = 0;
+
+    if (!user) {
+      console.log('User belum ada di database, menambahkan user baru.');
+      await new Promise((resolve, reject) => {
+        db.run(
+          'INSERT INTO users (user_id, trial_count, last_trial_date) VALUES (?, ?, ?)',
+          [userId, 0, today],
+          (err) => {
+            if (err) {
+              console.error('⚠️ Kesalahan saat menambahkan user:', err.message);
+              reject(err);
+            } else {
+              resolve();
+            }
+          }
+        );
+      });
+    } else if (user.last_trial_date === today) {
+      trialCount = user.trial_count;
+    }
+
+    if (trialCount >= 2) {
+      console.log(`User ${userId} telah mencapai batas trial hari ini.`);
+      return ctx.reply('🚫 *Anda sudah mencapai batas maksimal trial hari ini (5 kali).*', { parse_mode: 'Markdown' });
+    }
+
+    let msg;
+    console.log(`Menjalankan proses trial untuk ${type}...`);
+
+    if (type === 'ssh') {
+      msg = await trialssh(serverId);
+    } else if (type === 'vmess') {
+      msg = await trialvmess(serverId);
+    } else if (type === 'vless') {
+      msg = await trialvless(serverId);
+    } else if (type === 'trojan') {
+      msg = await trialtrojan(serverId);
+    } else {
+      console.error(`❌ Tipe trial tidak dikenali: ${type}`);
+      return ctx.reply('🚫 *Tipe trial tidak valid!*', { parse_mode: 'Markdown' });
+    }
+
+    console.log(`Trial ${type} berhasil dibuat. Mengupdate database...`);
+    await updateTrialCount(userId, today);
+
+    console.log(`Mengirim pesan hasil trial ke user...`);
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+
+  } catch (error) {
+    console.error(`❌ Error dalam proses trial: ${error.message}`);
+    ctx.reply('🚫 *Terjadi kesalahan saat memproses trial.*', { parse_mode: 'Markdown' });
+  }
+}
+
+
 bot.on('text', async (ctx) => {
   const state = userState[ctx.chat.id];
 
-  if (!state) return; 
+  if (!state) return;
 
   if (state.step.startsWith('username_')) {
     state.username = ctx.message.text.trim();
     if (!state.username) {
-      return ctx.reply('❌ *Username tidak valid. Masukkan username yang valid.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Username tidak valid. Masukkan username yang valid.*', { parse_mode: 'Markdown' });
     }
     if (state.username.length < 3 || state.username.length > 20) {
-      return ctx.reply('❌ *Username harus terdiri dari 3 hingga 20 karakter.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Username harus terdiri dari 3 hingga 20 karakter.*', { parse_mode: 'Markdown' });
     }
     if (/[^a-zA-Z0-9]/.test(state.username)) {
-      return ctx.reply('❌ *Username tidak boleh mengandung karakter khusus atau spasi.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Username tidak boleh mengandung karakter khusus atau spasi.*', { parse_mode: 'Markdown' });
     }
     const { username, serverId, type, action } = state;
     if (action === 'create') {
@@ -1031,38 +2253,38 @@ bot.on('text', async (ctx) => {
   } else if (state.step.startsWith('password_')) {
     state.password = ctx.message.text.trim();
     if (!state.password) {
-      return ctx.reply('❌ *Password tidak valid. Masukkan password yang valid.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Password tidak valid. Masukkan password yang valid.*', { parse_mode: 'Markdown' });
     }
     if (state.password.length < 6) {
-      return ctx.reply('❌ *Password harus terdiri dari minimal 6 karakter.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Password harus terdiri dari minimal 6 karakter.*', { parse_mode: 'Markdown' });
     }
     if (/[^a-zA-Z0-9]/.test(state.password)) {
-      return ctx.reply('❌ *Password tidak boleh mengandung karakter khusus atau spasi.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Password tidak boleh mengandung karakter khusus atau spasi.*', { parse_mode: 'Markdown' });
     }
     state.step = `exp_${state.action}_${state.type}`;
     await ctx.reply('⏳ *Masukkan masa aktif (hari):*', { parse_mode: 'Markdown' });
   } else if (state.step.startsWith('exp_')) {
     const expInput = ctx.message.text.trim();
     if (!/^\d+$/.test(expInput)) {
-      return ctx.reply('❌ *Masa aktif tidak valid. Masukkan angka yang valid.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Masa aktif tidak valid. Masukkan angka yang valid.*', { parse_mode: 'Markdown' });
     }
     const exp = parseInt(expInput, 10);
     if (isNaN(exp) || exp <= 0) {
-      return ctx.reply('❌ *Masa aktif tidak valid. Masukkan angka yang valid.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Masa aktif tidak valid. Masukkan angka yang valid.*', { parse_mode: 'Markdown' });
     }
     if (exp > 365) {
-      return ctx.reply('❌ *Masa aktif tidak boleh lebih dari 365 hari.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Masa aktif tidak boleh lebih dari 365 hari.*', { parse_mode: 'Markdown' });
     }
     state.exp = exp;
 
     db.get('SELECT quota, iplimit FROM Server WHERE id = ?', [state.serverId], async (err, server) => {
       if (err) {
         console.error('⚠️ Error fetching server details:', err.message);
-        return ctx.reply('❌ *Terjadi kesalahan saat mengambil detail server.*', { parse_mode: 'Markdown' });
+        return ctx.reply('🚫 *Terjadi kesalahan saat mengambil detail server.*', { parse_mode: 'Markdown' });
       }
 
       if (!server) {
-        return ctx.reply('❌ *Server tidak ditemukan.*', { parse_mode: 'Markdown' });
+        return ctx.reply('🚫 *Server tidak ditemukan.*', { parse_mode: 'Markdown' });
       }
 
       state.quota = server.quota;
@@ -1071,47 +2293,70 @@ bot.on('text', async (ctx) => {
       const { username, password, exp, quota, iplimit, serverId, type, action } = state;
       let msg;
 
-      db.get('SELECT harga FROM Server WHERE id = ?', [serverId], async (err, server) => {
+      db.get('SELECT harga, harga_reseller FROM Server WHERE id = ?', [serverId], async (err, server) => {
         if (err) {
           console.error('⚠️ Error fetching server price:', err.message);
-          return ctx.reply('❌ *Terjadi kesalahan saat mengambil harga server.*', { parse_mode: 'Markdown' });
+          return ctx.reply('🚫 *Terjadi kesalahan saat mengambil harga server.*', { parse_mode: 'Markdown' });
         }
 
         if (!server) {
-          return ctx.reply('❌ *Server tidak ditemukan.*', { parse_mode: 'Markdown' });
+          return ctx.reply('🚫 *Server tidak ditemukan.*', { parse_mode: 'Markdown' });
         }
 
-        const harga = server.harga;
-        const totalHarga = harga * state.exp; 
+        const userRole = await getUserRole(ctx.from.id);
+        const hargaPerHari = userRole === 'reseller' ? server.harga_reseller : server.harga;
+        const totalHarga = hargaPerHari * exp;
 
         db.get('SELECT saldo FROM users WHERE user_id = ?', [ctx.from.id], async (err, user) => {
           if (err) {
             console.error('⚠️ Kesalahan saat mengambil saldo pengguna:', err.message);
-            return ctx.reply('❌ *Terjadi kesalahan saat mengambil saldo pengguna.*', { parse_mode: 'Markdown' });
+            return ctx.reply('🚫 *Terjadi kesalahan saat mengambil saldo pengguna.*', { parse_mode: 'Markdown' });
           }
 
           if (!user) {
-            return ctx.reply('❌ *Pengguna tidak ditemukan.*', { parse_mode: 'Markdown' });
+            return ctx.reply('🚫 *Pengguna tidak ditemukan.*', { parse_mode: 'Markdown' });
           }
 
           const saldo = user.saldo;
 
           if (saldo < totalHarga) {
-            return ctx.reply('❌ *Saldo Anda tidak mencukupi untuk melakukan transaksi ini.*', { parse_mode: 'Markdown' });
+            return ctx.reply('🚫 *Saldo Anda tidak mencukupi untuk melakukan transaksi ini.*', { parse_mode: 'Markdown' });
           }
-          if (action === 'create') {
-            if (type === 'vmess') {
-              msg = await createvmess(username, exp, quota, iplimit, serverId);
-            } else if (type === 'vless') {
-              msg = await createvless(username, exp, quota, iplimit, serverId);
-            } else if (type === 'trojan') {
-              msg = await createtrojan(username, exp, quota, iplimit, serverId);
-            } else if (type === 'shadowsocks') {
-              msg = await createshadowsocks(username, exp, quota, iplimit, serverId);
-            } else if (type === 'ssh') {
-              msg = await createssh(username, password, exp, iplimit, serverId);
+
+          // Kurangi saldo pengguna
+          db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, ctx.from.id], (err) => {
+            if (err) {
+              console.error('⚠️ Kesalahan saat mengurangi saldo pengguna:', err.message);
+              return ctx.reply('🚫 *Terjadi kesalahan saat mengurangi saldo pengguna.*', { parse_mode: 'Markdown' });
             }
-          } else if (action === 'renew') {
+          });
+
+          // Tambahkan total_create_akun
+          db.run('UPDATE Server SET total_create_akun = total_create_akun + 1 WHERE id = ?', [serverId], (err) => {
+            if (err) {
+              console.error('⚠️ Kesalahan saat menambahkan total_create_akun:', err.message);
+              return ctx.reply('🚫 *Terjadi kesalahan saat menambahkan total_create_akun.*', { parse_mode: 'Markdown' });
+            }
+          });
+
+          if (action === 'create') {
+  if (type === 'vmess') {
+    msg = await createvmess(username, exp, quota, iplimit, serverId);
+    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
+  } else if (type === 'vless') {
+    msg = await createvless(username, exp, quota, iplimit, serverId);
+    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
+  } else if (type === 'trojan') {
+    msg = await createtrojan(username, exp, quota, iplimit, serverId);
+    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
+  } else if (type === 'shadowsocks') {
+    msg = await createshadowsocks(username, exp, quota, iplimit, serverId);
+    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
+  } else if (type === 'ssh') {
+    msg = await createssh(username, password, exp, iplimit, serverId);
+    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
+  }
+}else if (action === 'renew') {
             if (type === 'vmess') {
               msg = await renewvmess(username, exp, quota, iplimit, serverId);
             } else if (type === 'vless') {
@@ -1124,27 +2369,28 @@ bot.on('text', async (ctx) => {
               msg = await renewssh(username, exp, iplimit, serverId);
             }
           }
-          // Kurangi saldo pengguna
-          db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, ctx.from.id], (err) => {
-            if (err) {
-              console.error('⚠️ Kesalahan saat mengurangi saldo pengguna:', err.message);
-              return ctx.reply('❌ *Terjadi kesalahan saat mengurangi saldo pengguna.*', { parse_mode: 'Markdown' });
-            }
+
+          // Kirim notifikasi ke grup setelah akun berhasil dibuat
+          const server = await new Promise((resolve, reject) => {
+            db.get('SELECT nama_server FROM Server WHERE id = ?', [serverId], (err, row) => {
+              if (err) {
+                reject(err);
+              } else {
+                resolve(row);
+              }
+            });
           });
-          // Tambahkan total_create_akun
-          db.run('UPDATE Server SET total_create_akun = total_create_akun + 1 WHERE id = ?', [serverId], (err) => {
-            if (err) {
-              console.error('⚠️ Kesalahan saat menambahkan total_create_akun:', err.message);
-              return ctx.reply('❌ *Terjadi kesalahan saat menambahkan total_create_akun.*', { parse_mode: 'Markdown' });
-            }
-          });
+
+          if (server) {
+            await sendGroupNotificationPurchase(ctx.from.username, ctx.from.id, type, server.nama_server, exp);
+          }
 
           await ctx.reply(msg, { parse_mode: 'Markdown' });
           delete userState[ctx.chat.id];
         });
       });
     });
-  } else if (state.step === 'addserver') {
+  } else if (state.step === 'addserver_domain') {
     const domain = ctx.message.text.trim();
     if (!domain) {
       await ctx.reply('⚠️ *Domain tidak boleh kosong.* Silakan masukkan domain server yang valid.', { parse_mode: 'Markdown' });
@@ -1203,27 +2449,43 @@ bot.on('text', async (ctx) => {
 
     state.step = 'addserver_harga';
     state.batas_create_akun = batas_create_akun;
-    await ctx.reply('💰 *Silakan masukkan harga server:*', { parse_mode: 'Markdown' });
+    await ctx.reply('💰 *Silakan masukkan harga server (harga member):*', { parse_mode: 'Markdown' });
   } else if (state.step === 'addserver_harga') {
     const harga = parseFloat(ctx.message.text.trim());
     if (isNaN(harga) || harga <= 0) {
       await ctx.reply('⚠️ *Harga tidak valid.* Silakan masukkan harga server yang valid.', { parse_mode: 'Markdown' });
       return;
     }
-    const { domain, auth, nama_server, quota, iplimit, batas_create_akun } = state;
+
+    state.harga = harga;
+    state.step = 'addserver_harga_reseller';
+    await ctx.reply('💰 *Silakan masukkan harga reseller:*', { parse_mode: 'Markdown' });
+  } else if (state.step === 'addserver_harga_reseller') {
+    const harga_reseller = parseFloat(ctx.message.text.trim());
+    if (isNaN(harga_reseller) || harga_reseller <= 0) {
+      await ctx.reply('⚠️ *Harga reseller tidak valid.* Silakan masukkan harga reseller yang valid.', { parse_mode: 'Markdown' });
+      return;
+    }
+
+    const { domain, auth, nama_server, quota, iplimit, batas_create_akun, harga } = state;
 
     try {
-      db.run('INSERT INTO Server (domain, auth, nama_server, quota, iplimit, batas_create_akun, harga, total_create_akun) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [domain, auth, nama_server, quota, iplimit, batas_create_akun, harga, 0], function(err) {
-        if (err) {
-          console.error('Error saat menambahkan server:', err.message);
-          ctx.reply('❌ *Terjadi kesalahan saat menambahkan server baru.*', { parse_mode: 'Markdown' });
-        } else {
-          ctx.reply(`✅ *Server baru dengan domain ${domain} telah berhasil ditambahkan.*\n\n📄 *Detail Server:*\n- Domain: ${domain}\n- Auth: ${auth}\n- Nama Server: ${nama_server}\n- Quota: ${quota}\n- Limit IP: ${iplimit}\n- Batas Create Akun: ${batas_create_akun}\n- Harga: Rp ${harga}`, { parse_mode: 'Markdown' });
+      db.run(
+        'INSERT INTO Server (domain, auth, nama_server, quota, iplimit, batas_create_akun, harga, harga_reseller, total_create_akun) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [domain, auth, nama_server, quota, iplimit, batas_create_akun, harga, harga_reseller, 0],
+        function (err) {
+          if (err) {
+            console.error('Error saat menambahkan server:', err.message);
+            ctx.reply('🚫 *Terjadi kesalahan saat menambahkan server baru.*', { parse_mode: 'Markdown' });
+          } else {
+            ctx.reply(
+              `✅ *Server baru dengan domain ${domain} telah berhasil ditambahkan.*\n\n📄 *Detail Server:*\n` +
+              `- Domain: ${domain}\n- Auth: ${auth}\n- Nama Server: ${nama_server}\n- Quota: ${quota}\n- Limit IP: ${iplimit}\n- Batas Create Akun: ${batas_create_akun}\n- Harga: Rp ${harga}`, { parse_mode: 'Markdown' });
         }
       });
     } catch (error) {
       console.error('Error saat menambahkan server:', error);
-      await ctx.reply('❌ *Terjadi kesalahan saat menambahkan server baru.*', { parse_mode: 'Markdown' });
+      await ctx.reply('🚫 *Terjadi kesalahan saat menambahkan server baru.*', { parse_mode: 'Markdown' });
     }
     delete userState[ctx.chat.id];
   }
@@ -1234,11 +2496,11 @@ bot.action('addserver', async (ctx) => {
   try {
     console.log('📥 Proses tambah server dimulai');
     await ctx.answerCbQuery();
-    await ctx.reply('🌐 *Silakan masukkan domain/ip server:*', { parse_mode: 'Markdown' });
-    userState[ctx.chat.id] = { step: 'addserver' };
+    await ctx.reply('🌍 *Silakan masukkan domain/ip server:*', { parse_mode: 'Markdown' });
+    userState[ctx.chat.id] = { step: 'addserver_domain' };
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses tambah server:', error);
-    await ctx.reply('❌ *GAGAL! Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.*', { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses tambah server:', error);
+    await ctx.reply('🚫 *GAGAL! Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.*', { parse_mode: 'Markdown' });
   }
 });
 bot.action('detailserver', async (ctx) => {
@@ -1327,14 +2589,14 @@ bot.action('resetdb', async (ctx) => {
       reply_markup: {
         inline_keyboard: [
           [{ text: '✅ Ya', callback_data: 'confirm_resetdb' }],
-          [{ text: '❌ Tidak', callback_data: 'cancel_resetdb' }]
+          [{ text: '🚫 Tidak', callback_data: 'cancel_resetdb' }]
         ]
       },
       parse_mode: 'Markdown'
     });
   } catch (error) {
-    console.error('❌ Error saat memulai proses reset database:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Error saat memulai proses reset database:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 
@@ -1344,7 +2606,7 @@ bot.action('confirm_resetdb', async (ctx) => {
     await new Promise((resolve, reject) => {
       db.run('DELETE FROM Server', (err) => {
         if (err) {
-          console.error('❌ Error saat mereset tabel Server:', err.message);
+          console.error('🚫 Error saat mereset tabel Server:', err.message);
           return reject('❗️ *PERHATIAN! Terjadi KESALAHAN SERIUS saat mereset database. Harap segera hubungi administrator!*');
         }
         resolve();
@@ -1352,18 +2614,18 @@ bot.action('confirm_resetdb', async (ctx) => {
     });
     await ctx.reply('🚨 *PERHATIAN! Database telah DIRESET SEPENUHNYA. Semua server telah DIHAPUS TOTAL.*', { parse_mode: 'Markdown' });
   } catch (error) {
-    console.error('❌ Error saat mereset database:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Error saat mereset database:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 
 bot.action('cancel_resetdb', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    await ctx.reply('❌ *Proses reset database dibatalkan.*', { parse_mode: 'Markdown' });
+    await ctx.reply('🚫 *Proses reset database dibatalkan.*', { parse_mode: 'Markdown' });
   } catch (error) {
-    console.error('❌ Error saat membatalkan reset database:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Error saat membatalkan reset database:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 bot.action('deleteserver', async (ctx) => {
@@ -1395,8 +2657,8 @@ bot.action('deleteserver', async (ctx) => {
       });
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses hapus server:', error);
-    await ctx.reply('❌ *GAGAL! Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.*', { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses hapus server:', error);
+    await ctx.reply('🚫 *GAGAL! Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.*', { parse_mode: 'Markdown' });
   }
 });
 
@@ -1407,8 +2669,8 @@ bot.action('cek_saldo', async (ctx) => {
     const row = await new Promise((resolve, reject) => {
       db.get('SELECT saldo FROM users WHERE user_id = ?', [userId], (err, row) => {
         if (err) {
-          console.error('❌ Kesalahan saat memeriksa saldo:', err.message);
-          return reject('❌ *Terjadi kesalahan saat memeriksa saldo Anda. Silakan coba lagi nanti.*');
+          console.error('🚫 Kesalahan saat memeriksa saldo:', err.message);
+          return reject('🚫 *Terjadi kesalahan saat memeriksa saldo Anda. Silakan coba lagi nanti.*');
         }
         resolve(row);
       });
@@ -1420,17 +2682,18 @@ bot.action('cek_saldo', async (ctx) => {
       await ctx.reply('⚠️ *Anda belum memiliki saldo. Silakan tambahkan saldo terlebih dahulu.*', { parse_mode: 'Markdown' });
     }
   } catch (error) {
-    console.error('❌ Kesalahan saat memeriksa saldo:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memeriksa saldo:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 const getUsernameById = async (userId) => {
   try {
     const telegramUser = await bot.telegram.getChat(userId);
-    return telegramUser.username || telegramUser.first_name;
+    // Jika username tidak ada, gunakan first_name atau User ID sebagai fallback
+    return telegramUser.username ? `@${telegramUser.username}` : telegramUser.first_name || `User ID: ${userId}`;
   } catch (err) {
-    console.error('❌ Kesalahan saat mengambil username dari Telegram:', err.message);
-    throw new Error('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil username dari Telegram.*');
+    console.error('🚫 Kesalahan saat mengambil username dari Telegram:', err.message);
+    return `User ID: ${userId}`; // Kembalikan User ID jika terjadi error
   }
 };
 
@@ -1438,7 +2701,7 @@ async function getUserIdFromTelegram(userId) {
   return new Promise((resolve, reject) => {
     db.get('SELECT id FROM Users WHERE user_id = ?', [userId], (err, row) => {
       if (err) {
-        console.error('❌ Kesalahan saat mengambil ID pengguna dari database:', err.message);
+        console.error('🚫 Kesalahan saat mengambil ID pengguna dari database:', err.message);
         reject(err);
       } else {
         resolve(row ? row.id : null);
@@ -1456,7 +2719,7 @@ bot.action('addsaldo_user', async (ctx) => {
     const users = await new Promise((resolve, reject) => {
       db.all('SELECT id, user_id FROM Users LIMIT 20', [], (err, users) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar user:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar user:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar user.*');
         }
         resolve(users);
@@ -1466,7 +2729,7 @@ bot.action('addsaldo_user', async (ctx) => {
     const totalUsers = await new Promise((resolve, reject) => {
       db.get('SELECT COUNT(*) as count FROM Users', [], (err, row) => {
         if (err) {
-          console.error('❌ Kesalahan saat menghitung total user:', err.message);
+          console.error('🚫 Kesalahan saat menghitung total user:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat menghitung total user.*');
         }
         resolve(row.count);
@@ -1508,8 +2771,8 @@ bot.action('addsaldo_user', async (ctx) => {
       parse_mode: 'Markdown'
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses tambah saldo user:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses tambah saldo user:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 bot.action(/next_users_(\d+)/, async (ctx) => {
@@ -1523,7 +2786,7 @@ bot.action(/next_users_(\d+)/, async (ctx) => {
     const users = await new Promise((resolve, reject) => {
       db.all(`SELECT id, user_id FROM Users LIMIT 20 OFFSET ${offset}`, [], (err, users) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar user:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar user:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar user.*');
         }
         resolve(users);
@@ -1533,7 +2796,7 @@ bot.action(/next_users_(\d+)/, async (ctx) => {
     const totalUsers = await new Promise((resolve, reject) => {
       db.get('SELECT COUNT(*) as count FROM Users', [], (err, row) => {
         if (err) {
-          console.error('❌ Kesalahan saat menghitung total user:', err.message);
+          console.error('🚫 Kesalahan saat menghitung total user:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat menghitung total user.*');
         }
         resolve(row.count);
@@ -1581,8 +2844,8 @@ bot.action(/next_users_(\d+)/, async (ctx) => {
 
     await ctx.editMessageReplyMarkup(replyMarkup);
   } catch (error) {
-    console.error('❌ Kesalahan saat memproses next users:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memproses next users:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 
@@ -1597,7 +2860,7 @@ bot.action(/prev_users_(\d+)/, async (ctx) => {
     const users = await new Promise((resolve, reject) => {
       db.all(`SELECT id, user_id FROM Users LIMIT 20 OFFSET ${offset}`, [], (err, users) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar user:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar user:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar user.*');
         }
         resolve(users);
@@ -1607,7 +2870,7 @@ bot.action(/prev_users_(\d+)/, async (ctx) => {
     const totalUsers = await new Promise((resolve, reject) => {
       db.get('SELECT COUNT(*) as count FROM Users', [], (err, row) => {
         if (err) {
-          console.error('❌ Kesalahan saat menghitung total user:', err.message);
+          console.error('🚫 Kesalahan saat menghitung total user:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat menghitung total user.*');
         }
         resolve(row.count);
@@ -1654,8 +2917,8 @@ bot.action(/prev_users_(\d+)/, async (ctx) => {
 
     await ctx.editMessageReplyMarkup(replyMarkup);
   } catch (error) {
-    console.error('❌ Kesalahan saat memproses previous users:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memproses previous users:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 bot.action('editserver_limit_ip', async (ctx) => {
@@ -1666,7 +2929,7 @@ bot.action('editserver_limit_ip', async (ctx) => {
     const servers = await new Promise((resolve, reject) => {
       db.all('SELECT id, nama_server FROM Server', [], (err, servers) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar server:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar server:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar server.*');
         }
         resolve(servers);
@@ -1692,8 +2955,8 @@ bot.action('editserver_limit_ip', async (ctx) => {
       parse_mode: 'Markdown'
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses edit limit IP server:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses edit limit IP server:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 bot.action('editserver_batas_create_akun', async (ctx) => {
@@ -1704,7 +2967,7 @@ bot.action('editserver_batas_create_akun', async (ctx) => {
     const servers = await new Promise((resolve, reject) => {
       db.all('SELECT id, nama_server FROM Server', [], (err, servers) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar server:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar server:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar server.*');
         }
         resolve(servers);
@@ -1730,8 +2993,8 @@ bot.action('editserver_batas_create_akun', async (ctx) => {
       parse_mode: 'Markdown'
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses edit batas create akun server:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses edit batas create akun server:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 bot.action('editserver_total_create_akun', async (ctx) => {
@@ -1742,7 +3005,7 @@ bot.action('editserver_total_create_akun', async (ctx) => {
     const servers = await new Promise((resolve, reject) => {
       db.all('SELECT id, nama_server FROM Server', [], (err, servers) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar server:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar server:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar server.*');
         }
         resolve(servers);
@@ -1768,8 +3031,8 @@ bot.action('editserver_total_create_akun', async (ctx) => {
       parse_mode: 'Markdown'
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses edit total create akun server:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses edit total create akun server:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 bot.action('editserver_quota', async (ctx) => {
@@ -1780,7 +3043,7 @@ bot.action('editserver_quota', async (ctx) => {
     const servers = await new Promise((resolve, reject) => {
       db.all('SELECT id, nama_server FROM Server', [], (err, servers) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar server:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar server:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar server.*');
         }
         resolve(servers);
@@ -1806,8 +3069,8 @@ bot.action('editserver_quota', async (ctx) => {
       parse_mode: 'Markdown'
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses edit quota server:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses edit quota server:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 bot.action('editserver_auth', async (ctx) => {
@@ -1818,7 +3081,7 @@ bot.action('editserver_auth', async (ctx) => {
     const servers = await new Promise((resolve, reject) => {
       db.all('SELECT id, nama_server FROM Server', [], (err, servers) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar server:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar server:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar server.*');
         }
         resolve(servers);
@@ -1839,13 +3102,13 @@ bot.action('editserver_auth', async (ctx) => {
       inlineKeyboard.push(buttons.slice(i, i + 2));
     }
 
-    await ctx.reply('🌐 *Silakan pilih server untuk mengedit auth:*', {
+    await ctx.reply('🌍 *Silakan pilih server untuk mengedit auth:*', {
       reply_markup: { inline_keyboard: inlineKeyboard },
       parse_mode: 'Markdown'
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses edit auth server:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses edit auth server:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 
@@ -1857,7 +3120,7 @@ bot.action('editserver_harga', async (ctx) => {
     const servers = await new Promise((resolve, reject) => {
       db.all('SELECT id, nama_server FROM Server', [], (err, servers) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar server:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar server:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar server.*');
         }
         resolve(servers);
@@ -1883,8 +3146,8 @@ bot.action('editserver_harga', async (ctx) => {
       parse_mode: 'Markdown'
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses edit harga server:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses edit harga server:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 
@@ -1896,7 +3159,7 @@ bot.action('editserver_domain', async (ctx) => {
     const servers = await new Promise((resolve, reject) => {
       db.all('SELECT id, nama_server FROM Server', [], (err, servers) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar server:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar server:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar server.*');
         }
         resolve(servers);
@@ -1917,13 +3180,13 @@ bot.action('editserver_domain', async (ctx) => {
       inlineKeyboard.push(buttons.slice(i, i + 2));
     }
 
-    await ctx.reply('🌐 *Silakan pilih server untuk mengedit domain:*', {
+    await ctx.reply('🌍 *Silakan pilih server untuk mengedit domain:*', {
       reply_markup: { inline_keyboard: inlineKeyboard },
       parse_mode: 'Markdown'
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses edit domain server:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses edit domain server:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 
@@ -1935,7 +3198,7 @@ bot.action('nama_server_edit', async (ctx) => {
     const servers = await new Promise((resolve, reject) => {
       db.all('SELECT id, nama_server FROM Server', [], (err, servers) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil daftar server:', err.message);
+          console.error('🚫 Kesalahan saat mengambil daftar server:', err.message);
           return reject('⚠️ *PERHATIAN! Terjadi kesalahan saat mengambil daftar server.*');
         }
         resolve(servers);
@@ -1961,39 +3224,116 @@ bot.action('nama_server_edit', async (ctx) => {
       parse_mode: 'Markdown'
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses edit nama server:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses edit nama server:', error);
+    await ctx.reply(`🚫 *${error}*`, { parse_mode: 'Markdown' });
   }
 });
 
 bot.action('topup_saldo', async (ctx) => {
   try {
-    await ctx.answerCbQuery(); 
+    await ctx.answerCbQuery();
     const userId = ctx.from.id;
     console.log(`🔍 User ${userId} memulai proses top-up saldo.`);
-    
 
+    // Inisialisasi state jika belum ada
     if (!global.depositState) {
       global.depositState = {};
     }
     global.depositState[userId] = { action: 'request_amount', amount: '' };
-    
-    console.log(`🔍 User ${userId} diminta untuk memasukkan jumlah nominal saldo.`);
-    
 
+    // Tampilkan keyboard numerik
     const keyboard = keyboard_nomor();
-    
-    await ctx.reply('💰 *Silakan masukkan jumlah nominal saldo yang Anda ingin tambahkan ke akun Anda:*', {
+    await ctx.reply('*jumlah nominal saldo [Minimal 10.000]:*', {
       reply_markup: {
-        inline_keyboard: keyboard
+        inline_keyboard: keyboard,
       },
-      parse_mode: 'Markdown'
+      parse_mode: 'Markdown',
     });
   } catch (error) {
-    console.error('❌ Kesalahan saat memulai proses top-up saldo:', error);
-    await ctx.reply('❌ *GAGAL! Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.*', { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memulai proses top-up saldo:', error);
+    await ctx.reply('🚫 Gagal memulai proses top-up. Silakan coba lagi nanti.', { parse_mode: 'Markdown' });
   }
-}); 
+});
+
+bot.on('callback_query', async (ctx) => {
+  const userId = ctx.from.id;
+  const data = ctx.callbackQuery.data;
+
+  // Pastikan state pengguna ada dan sedang dalam proses input jumlah
+  if (global.depositState && global.depositState[userId] && global.depositState[userId].action === 'request_amount') {
+    let currentAmount = global.depositState[userId].amount;
+
+    try {
+      if (data === 'delete') {
+        // Hapus digit terakhir
+        currentAmount = currentAmount.slice(0, -1);
+      } else if (data === 'confirm') {
+        // Validasi jumlah
+        if (currentAmount.length === 0) {
+          return await ctx.answerCbQuery('⚠️ Jumlah tidak boleh kosong!', { show_alert: true });
+        }
+        if (parseInt(currentAmount) < 100) {
+          return await ctx.answerCbQuery('⚠️ Jumlah minimal 10.000!', { show_alert: true });
+        }
+
+        // Buat nominal unik
+        const randomSuffix = Math.floor(10 + Math.random() * 90);
+        const uniqueAmount = parseInt(currentAmount) + randomSuffix;
+
+        // Kirim QRIS Pembayaran
+		const message = await ctx.replyWithPhoto({ source: './qris.png' }, {
+		  caption: `
+		<b>──────────────────────</b>
+		<b>Open TopUp Transaction Success</b>
+		<b>──────────────────────</b>
+		✧ <b>User</b>  : ${ctx.from.username}
+		✧ <b>ID</b>    : ${userId}
+		<b>──────────────────────</b>
+		✧ <b>Code</b>  : TRX-${Math.floor(100000 + Math.random() * 900000)}
+		✧ <b>Pay</b>   : Rp ${uniqueAmount.toLocaleString('id-ID')}
+		✧ <b>Info</b>  : ⏳ Pending
+		✧ <b>Exp</b>   : ${new Date(Date.now() + 3 * 60000).toLocaleTimeString('id-ID')}
+		✧ <b>Date</b>  : ${new Date().toLocaleString('id-ID')}
+		<b>──────────────────────</b>
+		BAYAR SESUAI YANG TERTERA DI PAY
+		<b>──────────────────────</b>
+		`,
+		  parse_mode: 'HTML',
+		});
+
+
+        // Simpan ID pesan QR untuk dihapus nanti
+        global.depositState[userId] = { uniqueAmount, userId, messageId: message.message_id };
+
+        // Tambahkan pekerjaan ke queue
+        await topUpQueue.add({ userId, amount: parseInt(currentAmount), uniqueAmount });
+
+        return;
+      } else {
+        // Tambahkan digit ke jumlah saat ini
+        if (currentAmount.length < 12) {
+          currentAmount += data;
+        } else {
+          return await ctx.answerCbQuery('⚠️ Jumlah maksimal adalah 12 digit!', { show_alert: true });
+        }
+      }
+
+      // Update state dan tampilkan jumlah saat ini
+      global.depositState[userId].amount = currentAmount;
+      const newMessage = `*jumlah nominal saldo [Minimal 10.000]:*\n\nJumlah saat ini: *Rp ${currentAmount}*`;
+      if (newMessage !== ctx.callbackQuery.message.text) {
+        await ctx.editMessageText(newMessage, {
+          reply_markup: { inline_keyboard: keyboard_nomor() },
+          parse_mode: 'Markdown',
+        });
+      }
+    } catch (error) {
+      console.error('🚫 Kesalahan saat memproses top-up:', error);
+      await ctx.reply('🚫 Gagal memproses top-up. Silakan coba lagi.', { parse_mode: 'Markdown' });
+    }
+  }
+});
+
 
 
 bot.action(/edit_harga_(\d+)/, async (ctx) => {
@@ -2061,7 +3401,7 @@ bot.action(/edit_auth_(\d+)/, async (ctx) => {
   console.log(`User ${ctx.from.id} memilih untuk mengedit auth server dengan ID: ${serverId}`);
   userState[ctx.chat.id] = { step: 'edit_auth', serverId: serverId };
 
-  await ctx.reply('🌐 *Silakan masukkan auth server baru:*', {
+  await ctx.reply('🌍 *Silakan masukkan auth server baru:*', {
     reply_markup: { inline_keyboard: keyboard_full() },
     parse_mode: 'Markdown'
   });
@@ -2071,7 +3411,7 @@ bot.action(/edit_domain_(\d+)/, async (ctx) => {
   console.log(`User ${ctx.from.id} memilih untuk mengedit domain server dengan ID: ${serverId}`);
   userState[ctx.chat.id] = { step: 'edit_domain', serverId: serverId };
 
-  await ctx.reply('🌐 *Silakan masukkan domain server baru:*', {
+  await ctx.reply('🌍 *Silakan masukkan domain server baru:*', {
     reply_markup: { inline_keyboard: keyboard_full() },
     parse_mode: 'Markdown'
   });
@@ -2104,7 +3444,7 @@ bot.action(/confirm_delete_server_(\d+)/, async (ctx) => {
     });
   } catch (error) {
     console.error('Kesalahan saat menghapus server:', error);
-    await ctx.reply('❌ *GAGAL! Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.*', { parse_mode: 'Markdown' });
+    await ctx.reply('🚫 *GAGAL! Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.*', { parse_mode: 'Markdown' });
   }
 });
 bot.action(/server_detail_(\d+)/, async (ctx) => {
@@ -2126,14 +3466,15 @@ bot.action(/server_detail_(\d+)/, async (ctx) => {
     }
 
     const serverDetails = `📋 *Detail Server* 📋\n\n` +
-      `🌐 *Domain:* \`${server.domain}\`\n` +
+      `🌍 *Domain:* \`${server.domain}\`\n` +
       `🔑 *Auth:* \`${server.auth}\`\n` +
       `🏷️ *Nama Server:* \`${server.nama_server}\`\n` +
       `📊 *Quota:* \`${server.quota}\`\n` +
       `📶 *Limit IP:* \`${server.iplimit}\`\n` +
       `🔢 *Batas Create Akun:* \`${server.batas_create_akun}\`\n` +
       `📋 *Total Create Akun:* \`${server.total_create_akun}\`\n` +
-      `💵 *Harga:* \`Rp ${server.harga}\`\n\n`;
+      `💵 *Harga:* \`Rp ${server.harga}\`\n` +
+      `💵 *Harga Reseller:* \`Rp ${server.harga_reseller}\`\n\n`;
 
     await ctx.reply(serverDetails, { parse_mode: 'Markdown' });
   } catch (error) {
@@ -2187,36 +3528,75 @@ bot.on('callback_query', async (ctx) => {
 
 async function handleCekSaldoSemua(ctx, userId) {
   if (userId != ADMIN) {
-    return await ctx.reply('❌ *Anda tidak memiliki izin untuk melihat saldo semua pengguna.*', { parse_mode: 'Markdown' });
+    return await ctx.reply('🚫 *Anda tidak memiliki izin untuk melihat saldo semua pengguna.*', { parse_mode: 'Markdown' });
   }
 
   try {
     const users = await new Promise((resolve, reject) => {
-      db.all('SELECT user_id, saldo FROM users', [], (err, rows) => {
+      db.all('SELECT user_id, saldo FROM users WHERE saldo > 0 ORDER BY saldo DESC', [], (err, rows) => {
         if (err) {
-          console.error('❌ Kesalahan saat mengambil data saldo semua user:', err.message);
-          return reject('❌ *Terjadi kesalahan saat mengambil data saldo semua pengguna.*');
+          console.error('🚫 Kesalahan saat mengambil data saldo semua user:', err.message);
+          return reject('🚫 *Terjadi kesalahan saat mengambil data saldo semua pengguna.*');
         }
         resolve(rows);
       });
     });
 
-    if (users.length === 0) {
-      return await ctx.reply('⚠️ *Belum ada pengguna yang memiliki saldo.*', { parse_mode: 'Markdown' });
+    if (!users || users.length === 0) {
+      return await ctx.editMessageText('⚠️ *Tidak ada pengguna dengan saldo lebih dari Rp0,00.*', { parse_mode: 'Markdown' });
     }
 
-    let message = '📊 *Saldo Semua Pengguna:*\n\n';
+    let message = '📊 *Saldo Pengguna dengan Saldo > 0:*\n\n';
+    message += '```\n'; // Awal format monospace
+    message += '┌──────────────┬─────────────────┐\n';
+    message += '│ 🆔 User ID   │ 💳 Saldo        │\n';
+    message += '├──────────────┼─────────────────┤\n';
+
     users.forEach(user => {
-      message += `🆔 ID: ${user.user_id} | 💳 Saldo: Rp${user.saldo}\n`;
+      let userId = user.user_id.toString().padEnd(12);
+      let saldo = `Rp${user.saldo.toLocaleString('id-ID')},00`.padStart(15);
+      message += `│ ${userId} │ ${saldo} │\n`;
     });
 
-    await ctx.reply(message, { parse_mode: 'Markdown' });
+    message += '└──────────────┴─────────────────┘\n';
+    message += '```\n'; // Akhir format monospace
+
+    await ctx.editMessageText(message, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Kembali ke Main Menu', callback_data: 'send_main_menu' }]
+        ]
+      }
+    });
 
   } catch (error) {
-    console.error('❌ Kesalahan saat mengambil saldo semua user:', error);
-    await ctx.reply(`❌ *${error}*`, { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat mengambil saldo semua user:', error);
+    await ctx.reply(`🚫 *Terjadi kesalahan:* ${error.message}`, { parse_mode: 'Markdown' });
   }
 }
+
+// Handler tombol kembali ke menu utama dengan transisi halus
+bot.action('send_main_menu', async (ctx) => {
+  try {
+    await ctx.editMessageText('🔄 *Kembali ke menu utama...*', { parse_mode: 'Markdown' });
+    setTimeout(async () => {
+      await ctx.editMessageText('📌 *Main Menu:*', {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔍 Cek Saldo', callback_data: 'cek_saldo' }],
+            [{ text: '⚙️ Pengaturan', callback_data: 'settings' }]
+          ]
+        }
+      });
+    }, 1000); // Delay 1 detik untuk efek transisi
+  } catch (error) {
+    console.error('🚫 Error saat kembali ke main menu:', error);
+  }
+});
+
+
 
 async function handleDepositState(ctx, userId, data) {
   let currentAmount = global.depositState[userId].amount;
@@ -2227,8 +3607,8 @@ async function handleDepositState(ctx, userId, data) {
     if (currentAmount.length === 0) {
       return await ctx.answerCbQuery('⚠️ Jumlah tidak boleh kosong!', { show_alert: true });
     }
-    if (parseInt(currentAmount) < 200) {
-      return await ctx.answerCbQuery('⚠️ Jumlah minimal adalah 200 perak!', { show_alert: true });
+    if (parseInt(currentAmount) < 100) {
+      return await ctx.answerCbQuery('⚠️ Jumlah minimal adalah 10Ribu!', { show_alert: true });
     }
     global.depositState[userId].action = 'confirm_amount';
     await processDeposit(ctx, currentAmount);
@@ -2241,8 +3621,9 @@ async function handleDepositState(ctx, userId, data) {
     }
   }
 
+
   global.depositState[userId].amount = currentAmount;
-  const newMessage = `💰 *Silakan masukkan jumlah nominal saldo yang Anda ingin tambahkan ke akun Anda:*\n\nJumlah saat ini: *Rp ${currentAmount}*`;
+  const newMessage = `*Silakan masukkan jumlah nominal saldo yang Anda ingin tambahkan ke akun Anda [Minimal 10.000]:*\n\nJumlah saat ini: *Rp ${currentAmount}*`;
   if (newMessage !== ctx.callbackQuery.message.text) {
     await ctx.editMessageText(newMessage, {
       reply_markup: { inline_keyboard: keyboard_nomor() },
@@ -2265,7 +3646,7 @@ async function handleAddSaldo(ctx, userStateData, data) {
       await updateUserSaldo(userStateData.userId, currentSaldo);
       ctx.reply(`✅ *Saldo user berhasil ditambahkan.*\n\n📄 *Detail Saldo:*\n- Jumlah Saldo: *Rp ${currentSaldo}*`, { parse_mode: 'Markdown' });
     } catch (err) {
-      ctx.reply('❌ *Terjadi kesalahan saat menambahkan saldo user.*', { parse_mode: 'Markdown' });
+      ctx.reply('🚫 *Terjadi kesalahan saat menambahkan saldo user.*', { parse_mode: 'Markdown' });
     }
     delete userState[ctx.chat.id];
     return;
@@ -2273,10 +3654,10 @@ async function handleAddSaldo(ctx, userStateData, data) {
     if (!/^[0-9]+$/.test(data)) {
       return await ctx.answerCbQuery('⚠️ *Jumlah saldo tidak valid!*', { show_alert: true });
     }
-    if (currentSaldo.length < 10) {
+    if (currentSaldo.length < 12) {
       currentSaldo += data;
     } else {
-      return await ctx.answerCbQuery('⚠️ *Jumlah saldo maksimal adalah 10 karakter!*', { show_alert: true });
+      return await ctx.answerCbQuery('⚠️ *Jumlah saldo maksimal adalah 12 karakter!*', { show_alert: true });
     }
   }
 
@@ -2325,13 +3706,13 @@ async function handleEditHarga(ctx, userStateData, data) {
     }
     const hargaBaru = parseFloat(currentAmount);
     if (isNaN(hargaBaru) || hargaBaru <= 0) {
-      return ctx.reply('❌ *Harga tidak valid. Masukkan angka yang valid.*', { parse_mode: 'Markdown' });
+      return ctx.reply('🚫 *Harga tidak valid. Masukkan angka yang valid.*', { parse_mode: 'Markdown' });
     }
     try {
       await updateServerField(userStateData.serverId, hargaBaru, 'UPDATE Server SET harga = ? WHERE id = ?');
       ctx.reply(`✅ *Harga server berhasil diupdate.*\n\n📄 *Detail Server:*\n- Harga Baru: *Rp ${hargaBaru}*`, { parse_mode: 'Markdown' });
     } catch (err) {
-      ctx.reply('❌ *Terjadi kesalahan saat mengupdate harga server.*', { parse_mode: 'Markdown' });
+      ctx.reply('🚫 *Terjadi kesalahan saat mengupdate harga server.*', { parse_mode: 'Markdown' });
     }
     delete userState[ctx.chat.id];
     return;
@@ -2373,7 +3754,7 @@ async function handleEditField(ctx, userStateData, data, field, fieldName, query
       await updateServerField(userStateData.serverId, currentValue, query);
       ctx.reply(`✅ *${fieldName} server berhasil diupdate.*\n\n📄 *Detail Server:*\n- ${fieldName.charAt(0).toUpperCase() + fieldName.slice(1)}: *${currentValue}*`, { parse_mode: 'Markdown' });
     } catch (err) {
-      ctx.reply(`❌ *Terjadi kesalahan saat mengupdate ${fieldName} server.*`, { parse_mode: 'Markdown' });
+      ctx.reply(`🚫 *Terjadi kesalahan saat mengupdate ${fieldName} server.*`, { parse_mode: 'Markdown' });
     }
     delete userState[ctx.chat.id];
     return;
@@ -2411,6 +3792,7 @@ async function updateUserSaldo(userId, saldo) {
   });
 }
 
+
 async function updateServerField(serverId, value, query) {
   return new Promise((resolve, reject) => {
     db.run(query, [value, serverId], function (err) {
@@ -2425,55 +3807,57 @@ async function updateServerField(serverId, value, query) {
 }
 
 global.depositState = {};
-let lastRequestTime = 0;
-const requestInterval = 1000; 
-async function processDeposit(ctx, amount) {
-  const currentTime = Date.now();
 
-  if (currentTime - lastRequestTime < requestInterval) {
-    return ctx.reply('⚠️ *Terlalu banyak permintaan. Silakan tunggu sebentar sebelum mencoba lagi.*', { parse_mode: 'Markdown' });
-  }
-
-  lastRequestTime = currentTime;
-  const userId = ctx.from.id;
-
-  // Buat nominal unik (2 angka random di belakang jumlah utama)
-  const randomSuffix = Math.floor(10 + Math.random() * 90); // Angka random 10-99
-  const uniqueAmount = parseInt(amount) + randomSuffix; // Misalnya 200 jadi 231
-
-  // Simpan permintaan deposit
-  global.depositState[userId] = { uniqueAmount, userId };
+// Proses top-up
+topUpQueue.process(async (job) => {
+  const { userId, amount, uniqueAmount } = job.data;
 
   try {
-    // Kirim QRIS Pembayaran dengan nominal unik
-    await ctx.replyWithPhoto({ source: './qris.png' }, {
-      caption: `🌟 *Informasi Deposit Anda* 🌟\n\n💼 *Jumlah:* Rp ${uniqueAmount}\n⏳ *Mohon transfer Sebelum 3 Menit dengan nominal yang tepat agar terdeteksi otomatis!*`,
-      parse_mode: 'Markdown'
-    });
+    console.log(`🔍 Memproses top-up untuk user ${userId} sebesar Rp${amount}`);
 
-    console.log(`🔍 User ${userId} diminta melakukan pembayaran QRIS sebesar Rp${uniqueAmount}`);
-
-    // Tunggu pembayaran masuk selama 5 menit
     let pembayaranDiterima = false;
-    const timeout = Date.now() + 150000; // 5 menit
+    const timeout = Date.now() + 180000; // 3 menit
 
     while (Date.now() < timeout) {
       const transaksi = await cekMutasi(uniqueAmount);
       if (transaksi) {
         console.log(`✅ Pembayaran diterima dari ${transaksi.buyer_reff} sebesar ${transaksi.amount}`);
 
-        // Update saldo user setelah pembayaran diterima
+        // Hapus QR karena pembayaran diterima
+        await bot.telegram.deleteMessage(userId, global.depositState[userId].messageId);
+
         const userDbId = await getUserIdFromTelegram(userId);
         if (!userDbId) {
-          console.error(`❌ User ID tidak ditemukan dalam database untuk Telegram ID: ${userId}`);
-          return await ctx.reply('❌ *Akun Anda tidak ditemukan dalam sistem kami.*', { parse_mode: 'Markdown' });
+          console.error(`🚫 User ID tidak ditemukan dalam database untuk Telegram ID: ${userId}`);
+          throw new Error('User ID tidak ditemukan dalam database');
         }
 
-        await updateUserSaldo(userDbId, parseInt(transaksi.amount)); // Memperbarui saldo berdasarkan ID di database
+        await updateUserSaldo(userDbId, parseInt(transaksi.amount));
         console.log(` Pengguna Ke ${userDbId} Melakukan Deposit Sebesar *Rp${transaksi.amount}*`);
 
-        await ctx.reply(`✅ *Pembayaran berhasil!* Saldo Anda telah ditambahkan sebesar *Rp${transaksi.amount}*`, { parse_mode: 'Markdown' });
+        // **Cek dan upgrade ke reseller jika saldo >= 25.000**
+        if (transaksi.amount >= 25000) {
+          await checkAndUpdateUserRole(userId);
+        }
+        
+         // **Notifikasi ke pengguna**
+        await sendUserNotificationTopup(userId, transaksi.amount, uniqueAmount);
 
+        // **Notifikasi ke admin dan grup**
+        const user = await bot.telegram.getChat(userId); // Ambil info pengguna
+        const username = user.username || `User ID: ${userId}`; // Gunakan username atau ID jika username tidak ada
+        
+        console.log("Mengirim notifikasi top-up ke admin...");
+        await sendAdminNotificationTopup(username, userId, transaksi.amount, uniqueAmount);
+
+        console.log("Mengirim notifikasi top-up ke grup...");
+        await sendGroupNotificationTopup(username, userId, transaksi.amount, uniqueAmount);
+
+        console.log("Notifikasi top-up selesai diproses.");
+        
+        // Catat transaksi
+        await recordUserTransaction(userId);
+        
         pembayaranDiterima = true;
         break;
       }
@@ -2482,29 +3866,27 @@ async function processDeposit(ctx, amount) {
     }
 
     if (!pembayaranDiterima) {
-      console.log(`❌ Pembayaran tidak ditemukan untuk User ${userId}`);
+      console.log(`🚫 Pembayaran tidak ditemukan untuk User ${userId}`);
 
-      // Kirim pesan ke pengguna bahwa pembayaran tidak ditemukan
-      await ctx.reply('❌ *Kami tidak menemukan pembayaran dalam 3 menit terakhir.* Jika sudah membayar, harap hubungi admin.', { parse_mode: 'Markdown' });
+      // Hapus QR setelah 3 menit jika pembayaran tidak ditemukan
+      await bot.telegram.deleteMessage(userId, global.depositState[userId].messageId);
+
+      await bot.telegram.sendMessage(userId, '🚫 Status TopUp Canceled. Melebihi batas waktu. Silahkan ulangi kembali', { parse_mode: 'Markdown' });
     }
-      await new Promise(resolve => setTimeout(resolve, 2000));
   } catch (error) {
-    console.error('❌ Kesalahan saat memproses top-up saldo:', error);
-    await ctx.reply('❌ *Terjadi kesalahan saat memproses permintaan Anda.*', { parse_mode: 'Markdown' });
+    console.error('🚫 Kesalahan saat memproses top-up saldo:', error);
+    await bot.telegram.sendMessage(userId, '✅ *SUCCESS*', { parse_mode: 'Markdown' });
   } finally {
-    // Menghapus status deposit setelah proses selesai (baik gagal maupun berhasil)
     delete global.depositState[userId];
-      console.log('🔄 Restarting bot...');
-      process.exit(1); // Memicu restart oleh systemd
-    }
   }
+});
 
 
 
 // Fungsi untuk mengecek mutasi transaksi dari OkeConnect
 async function cekMutasi(expectedAmount, maxWaitTime = 140000, interval = 5000) {
   try {
-    const startTime = Date.now(); // Catat waktu mulai
+    const startTime = Date.now();
     const apiKey = vars.OKE_API_KEY;
     const IdMerch = vars.OKE_API_BASE;
     const url = `https://gateway.okeconnect.com/api/mutasi/qris/${IdMerch}/${apiKey}`;
@@ -2513,42 +3895,39 @@ async function cekMutasi(expectedAmount, maxWaitTime = 140000, interval = 5000) 
 
     while (Date.now() - startTime < maxWaitTime) {
       try {
-        const response = await axios.get(url, { timeout: 10000 }); // Tambahkan timeout 10 detik
+        const response = await axios.get(url, { timeout: 10000 });
 
         if (response.data.status === 'success' && Array.isArray(response.data.data)) {
-
-          // Log untuk melihat transaksi yang tersedia
           console.log(`🔎 Mencocokkan transaksi dengan nominal unik: Rp${expectedAmount}`);
           response.data.data.forEach(item => {
             console.log(`🔹 Transaksi ditemukan: Type: ${item.type}, Amount: ${item.amount}, Buyer Reff: ${item.buyer_reff}`);
           });
 
-          // Cari transaksi yang sesuai dengan nominal unik
           const mutasiTerbaru = response.data.data.find(item => 
             item.type === 'CR' && 
-            parseInt(item.amount) === parseInt(expectedAmount) // Cocokkan dengan nominal unik
+            parseInt(item.amount) === parseInt(expectedAmount)
           );
 
           if (mutasiTerbaru) {
             console.log(`✅ Pembayaran ditemukan: Rp${mutasiTerbaru.amount}, Buyer Reff: ${mutasiTerbaru.buyer_reff}`);
             return mutasiTerbaru;
           } else {
-            console.log(`❌ Tidak ada transaksi yang cocok dengan nominal: Rp${expectedAmount}`);
+            console.log(`🚫 Tidak ada transaksi yang cocok dengan nominal: Rp${expectedAmount}`);
           }
         }
       } catch (err) {
-        console.error('❌ Gagal mengambil mutasi:', err.message);
+        console.error('🚫 Gagal mengambil mutasi:', err.message);
       }
 
       console.log('🔄 Menunggu pembayaran...');
-      await new Promise(resolve => setTimeout(resolve, interval)); // Tunggu sebelum cek ulang
+      await new Promise(resolve => setTimeout(resolve, interval));
     }
 
-    console.log(`❌ Pembayaran tidak ditemukan untuk Rp${expectedAmount}`);
+    console.log(`🚫 Pembayaran tidak ditemukan untuk Rp${expectedAmount}`);
     return null;
 
   } catch (error) {
-    console.error('❌ Kesalahan saat mengambil mutasi:', error);
+    console.error('🚫 Kesalahan saat mengambil mutasi:', error);
     return null;
   }
 }
@@ -2571,35 +3950,74 @@ function keyboard_abc() {
   return buttons;
 }
 
-function keyboard_nomor() {
-  const alphabet = '1234567890@';
-  const buttons = [];
-  for (let i = 0; i < alphabet.length; i += 3) {
-    const row = alphabet.slice(i, i + 3).split('').map(char => ({
-      text: char,
-      callback_data: char
-    }));
-    buttons.push(row);
+bot.action('send_main_menu', async (ctx) => {
+  console.log('Tombol Kembali ke Menu Utama diklik oleh:', ctx.from.id);
+
+  try {
+    // Coba hapus pesan menu saat ini
+    try {
+      await ctx.deleteMessage();
+      console.log('Pesan menu dihapus.');
+    } catch (deleteError) {
+      console.warn('Tidak dapat menghapus pesan:', deleteError.message);
+      // Jika pesan tidak dapat dihapus, lanjutkan tanpa menghapus
+    }
+
+    // Tampilkan menu utama
+    await sendMainMenu(ctx);
+  } catch (error) {
+    console.error('Gagal memproses permintaan:', error);
+    await ctx.reply('🚫 Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi.', { parse_mode: 'Markdown' });
   }
-  buttons.push([{ text: '🔙 Hapus', callback_data: 'delete' }, { text: '✅ Konfirmasi', callback_data: 'confirm' }]);
-  buttons.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }]);
-  return buttons;
+});
+function keyboard_nomor() {
+  const rows = [
+    ['1', '2', '3'],
+    ['4', '5', '6'],
+    ['7', '8', '9'],
+    [' ', '0', '⌫ Hapus'], // Spasi untuk menjaga posisi angka 0
+    ['✅ Konfirmasi'],
+    ['🔙 Kembali ke Menu Utama']
+  ];
+
+  return rows.map(row => row
+    .filter(text => text !== ' ') // Hapus elemen kosong agar tidak ada tombol kosong
+    .map(text => ({
+      text,
+      callback_data: text.replace('⌫ Hapus', 'delete')
+                         .replace('✅ Konfirmasi', 'confirm')
+                         .replace('🔙 Kembali ke Menu Utama', 'send_main_menu')
+    }))
+  );
 }
+
+
 
 function keyboard_full() {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789@';
   const buttons = [];
-  for (let i = 0; i < alphabet.length; i += 3) {
-    const row = alphabet.slice(i, i + 3).split('').map(char => ({
+  
+  // Membuat tombol dengan 4 karakter per baris
+  for (let i = 0; i < alphabet.length; i += 4) {
+    const row = alphabet.slice(i, i + 4).split('').map(char => ({
       text: char,
       callback_data: char
     }));
     buttons.push(row);
   }
-  buttons.push([{ text: '🔙 Hapus', callback_data: 'delete' }, { text: '✅ Konfirmasi', callback_data: 'confirm' }]);
-  buttons.push([{ text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }]);
+
+  // Tambahan tombol kontrol
+  buttons.push([
+    { text: '⌫ Hapus', callback_data: 'delete' },
+    { text: '✅ Konfirmasi', callback_data: 'confirm' }
+  ]);
+  buttons.push([
+    { text: '🔙 Kembali ke Menu Utama', callback_data: 'send_main_menu' }
+  ]);
+
   return buttons;
 }
+
 
 app.post('/callback/paydisini', async (req, res) => {
   console.log('Request body:', req.body); // Log untuk debugging
@@ -2664,6 +4082,8 @@ app.post('/callback/paydisini', async (req, res) => {
       return res.status(500).send('⚠️ Kesalahan saat memproses penambahan saldo');
   }
 });
+
+// Fungsi untuk memvalidasi link
 
 app.listen(port, () => {
     bot.launch().then(() => {
