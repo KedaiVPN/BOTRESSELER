@@ -50,6 +50,9 @@ setup_bot() {
 	NODE_VERSION=$(node -v 2>/dev/null | grep -oP '(?<=v)\d+' || echo "0")
 	rm /var/lib/dpkg/stato*
 	rm /var/lib/dpkg/lock*
+	apt-get install redis-server
+	systemctl start redis
+	systemctl enable redis-server
 
 	if [ "$NODE_VERSION" -lt 22 ]; then
 		echo -e "${yellow}Installing or upgrading Node.js to version 22...${neutral}"
@@ -65,7 +68,7 @@ setup_bot() {
     fi
 
     if ! npm list --prefix /root/Nebotsell express telegraf axios moment sqlite3 >/dev/null 2>&1; then
-        npm install --prefix /root/Nebotsell sqlite3 express crypto telegraf axios dotenv
+        npm install --prefix /root/Nebotsell sqlite3 express crypto telegraf axios dotenv bull
     fi
 
     if [ -n "$(ls -A /root/Nebotsell)" ]; then
