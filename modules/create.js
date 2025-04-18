@@ -39,7 +39,6 @@ async function createssh(username, password, exp, iplimit, serverId) {
 │ *Domain*   : \`${sshData.domain}\`
 │ *SSH WS*   : \`80\`
 │ *SSH WS SSL*: \`443\`
-│ *SSL/TLS*  : \`443\`
 └─────────────────────
 🔗 *Detail account anda*
 ───────────────────────
