@@ -1277,7 +1277,7 @@ async function sendGroupNotificationPurchase(username, userId, serviceType, serv
 
   const groupMessage = `
 ──────────────────────
-⟨ TRX KEDAIVPN BOT ⟩
+⟨ TRX BOT KEDAI VPN ⟩
 ──────────────────────
 THANKS TO
 ➥ User  : [${username}](tg://user?id=${userId})
@@ -1290,7 +1290,6 @@ THANKS TO
 ➥ Total Harga : Rp${totalHarga.toLocaleString('id-ID')}
 ➥ Tanggal : ${currentDate}
 ──────────────────────
-Notifikasi Pembelian detail di bawah.
 `;
 
   try {
