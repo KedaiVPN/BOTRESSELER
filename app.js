@@ -268,8 +268,8 @@ bot.command(['start', 'menu'], async (ctx) => {
 █░░║║║╠─║─║─║║║║║╠─░░█
 █░░╚╩╝╚╝╚╝╚╝╚╝╩─╩╚╝░░█
 █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█
- Selamat Datang *${username}*
- ID anda: *${userId}*
+ Username: <i>${username}</i>
+ ID anda: <i>${userId}</i>
 ──────────────────────────
 𝙹𝚒𝚔𝚊 𝚜𝚞𝚍𝚊𝚑 𝙿𝚊𝚑𝚊𝚖
 𝙱𝚒𝚜𝚊 𝚕𝚊𝚗𝚐𝚜𝚞𝚗𝚐 𝚔𝚕𝚒𝚔 𝙼𝚊𝚒𝚗𝙼𝚎𝚗𝚞♻️
@@ -857,6 +857,13 @@ const messageText = `
 █░░║║║╠─║─║─║║║║║╠─░░█
 █░░╚╩╝╚╝╚╝╚╝╚╝╩─╩╚╝░░█
 █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█
+
+👋 <b>Username:</b> <i>${username}</i>  
+🆔 <b>ID Anda:</b> <code>${userId}</code>  
+⭕ <b>Status:</b> ${role === 'reseller' ? 'Reseller 🛍️' : '👤 Member'}  
+💵 <b>Saldo:</b> Rp ${formattedSaldo}
+
+<b>┅┅┅┅┅┅┅ INFO SERVER ┅┅┅┅┅┅┅</b>  
 🌐 <b>Server Tersedia:</b> ${jumlahServer}  
 👥 <b>Total Pengguna:</b> ${jumlahPengguna}  
 📊 <b>Akun (30 Hari):</b> ${totalAkun30Hari}  
@@ -865,12 +872,6 @@ const messageText = `
 <b>┅┅┅┅┅ TRIAL HARI INI ┅┅┅┅┅┅┅</b>  
 ❇️ <b>Max 2x Sehari</b>  
 🔁 <b>Trial Anda:</b> ${trialHariIni}/2  
-
-<b>┅┅┅┅┅┅┅ INFO AKUN ┅┅┅┅┅┅┅</b>  
-👋 <b>Selamat Datang</b> <i>${username}</i>  
-🆔 <b>ID Anda:</b> <code>${userId}</code>  
-⭕ <b>Status:</b> ${role === 'reseller' ? 'Reseller 🛍️' : '👤 Member'}  
-💵 <b>Saldo:</b> Rp ${formattedSaldo}  
 
 <b>┅┅┅┅┅┅ TOP 3 CREATOR ┅┅┅┅┅┅</b>  
 🏆 <b>(30 Hari Terakhir)</b>  
