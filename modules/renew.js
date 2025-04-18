@@ -38,7 +38,7 @@ async function renewssh(username, exp, limitip, serverId) {
 │ Batas IP: \`${sshData.ip_limit} IP\`
 └─────────────────────────────
 ✅ Akun ${username} berhasil diperbarui
-✨ Selamat menggunakan layanan kami! ✨
+✿Terimakasih Telah Menggunakan layanan kami!✿
 `;
          
               console.log('SSH account renewed successfully');
@@ -93,7 +93,7 @@ async function renewvmess(username, exp, quota, limitip, serverId) {
   │ Batas IP: \`${vmessData.ip_limit} IP\`
   └─────────────────────────────
   ✅ Akun ${username} berhasil diperbarui
-  ✨ Selamat menggunakan layanan kami! ✨
+  ✿Terimakasih Telah Menggunakan layanan kami!✿
   `;
                 console.log('VMess account renewed successfully');
                 return resolve(msg);
@@ -146,7 +146,7 @@ async function renewvmess(username, exp, quota, limitip, serverId) {
   │ Batas IP: \`${vlessData.ip_limit} IP\`
   └─────────────────────────────
   ✅ Akun ${username} berhasil diperbarui
-  ✨ Selamat menggunakan layanan kami! ✨
+  ✿Terimakasih Telah Menggunakan layanan kami!✿
   `;
            
                 console.log('VLess account renewed successfully');
@@ -200,7 +200,7 @@ async function renewvmess(username, exp, quota, limitip, serverId) {
   │ Batas IP: \`${trojanData.ip_limit} IP\`
   └─────────────────────────────
   ✅ Akun ${username} berhasil diperbarui
-  ✨ Selamat menggunakan layanan kami! ✨
+  ✿Terimakasih Telah Menggunakan layanan kami!✿
   `;
            
                 console.log('Trojan account renewed successfully');
@@ -254,7 +254,7 @@ async function renewvmess(username, exp, quota, limitip, serverId) {
   │ Batas IP: \`${shadowsocksData.ip_limit} IP\`
   └─────────────────────────────
   ✅ Akun ${username} berhasil diperbarui
-  ✨ Selamat menggunakan layanan kami! ✨
+  ✿Terimakasih Telah Menggunakan layanan kami!✿
   `;
            
                 console.log('Shadowsocks account renewed successfully');
