@@ -243,15 +243,15 @@ bot.command(['start', 'menu'], async (ctx) => {
 
   const keyboard = [
     [
-      { text: 'CARA TOPUP', url: 'https://t.me/internetgratisin/21' },
+      { text: 'CARA TOPUP', url: 'https://t.me/groupkedaivpn/4094/4963' },
     ],
     [
-      { text: 'CARA GENERATE BUG', url: 'https://t.me/internetgratisin/22' },
-      { text: 'CARA CONVERT YAML', url: 'https://t.me/internetgratisin/47' },
+      { text: 'CARA GENERATE BUG', url: 'https://t.me/groupkedaivpn/4094/4966' },
+      { text: 'CARA CONVERT YAML', url: 'https://t.me/groupkedaivpn/4094/4967' },
     ],
     [
-      { text: 'CARA ORDER', url: 'https://t.me/internetgratisin/23' },
-      { text: 'CARA RENEW AKUN', url: 'https://t.me/internetgratisin/24' },
+      { text: 'CARA ORDER', url: 'https://t.me/groupkedaivpn/4094/4964' },
+      { text: 'CARA RENEW AKUN', url: 'https://t.me/groupkedaivpn/4094/4965' },
     ],
     [
       { text: 'GRUP TELEGRAM', url: 'https://t.me/c/2198385289/1' },
