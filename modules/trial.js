@@ -119,28 +119,11 @@ async function trialssh(serverId, usernameTelegram) {
 │ *Username* : \`${sshData.username}\`
 │ *Password* : \`${sshData.password}\`
 │ *Domain*   : \`${sshData.domain}\`
-│ *Port TLS* : \`443\`
-│ *Port HTTP*: \`80\`
-│ *OpenSSH*  : \`22\`
-│ *UdpSSH*   : \`1-65535\`
-│ *DNS*      : \`443, 53, 22\`
-│ *Dropbear* : \`443, 109\`
 │ *SSH WS*   : \`80\`
 │ *SSH SSL WS*: \`443\`
-│ *SSL/TLS*  : \`443\`
-│ *OVPN SSL* : \`443\`
-│ *OVPN TCP* : \`1194\`
-│ *OVPN UDP* : \`2200\`
-│ *BadVPN UDP*: \`7100, 7300, 7300\`
 └─────────────────────
-🔗 *Link dan Payload*
+🔗 *Detail account trial*
 ───────────────────────
-Payload      : 
-\`
-GET / HTTP/1.1
-Host: ${sshData.domain}
-Upgrade: websocket
-\`
 Format Account WS: 
 \`
 ${sshData.domain}:80@${sshData.username}:${sshData.password}
