@@ -142,7 +142,7 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
 │ IP Limit: \`${sshData.ip_limit}\`
 └─────────────────────
 
-✿Terimakasih Telah Menggunakan layanan kami!✿
+ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
 `;
               console.log('SSH account created successfully');
               return resolve(msg);
@@ -246,7 +246,7 @@ ${vmessData.uuid}
 │ IP Limit: \`${vmessData.ip_limit === '0' ? 'Unlimited' : vmessData.ip_limit} \`
 └─────────────────────
 Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessData.username}.txt)
-✿Terimakasih Telah Menggunakan Layanan Kami!✿
+ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
 `;
               console.log('VMess account created successfully');
               return resolve(msg);
@@ -358,7 +358,7 @@ ${vlessData.uuid}
 │ IP Limit: \`${vlessData.ip_limit === '0' ? 'Unlimited' : vlessData.ip_limit} IP\`
 └─────────────────────
 Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessData.username}.txt)
-✿Terimakasih Telah Menggunakan Layanan Kami!✿
+ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
 `;
               console.log('VLESS account created successfully');
               return resolve(msg);
@@ -471,7 +471,7 @@ ${trojanData.uuid}
 │ IP Limit: \`${trojanData.ip_limit === '0' ? 'Unlimited' : trojanData.ip_limit} \`
 └─────────────────────
 Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${trojanData.username}.txt)
-✿Terimakasih  Telah menggunakan layanan kami!✿
+ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
 `;
               console.log('Trojan account created successfully');
               return resolve(msg);
