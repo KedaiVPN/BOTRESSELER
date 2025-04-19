@@ -85,6 +85,7 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
 
 
 ensureUserTableColumns();
+ensureServerTableColumns();
 const userState = {};
 console.log('User state initialized');
 
@@ -126,68 +127,38 @@ async function ensureUserTableColumns() {
   });
 }
 
-function migrateServerTable(db) {
-  db.serialize(() => {
-    // 1. Rename tabel lama
-    db.run(`ALTER TABLE Server RENAME TO _old_Server;`, (err) => {
-      if (err) {
-        console.error('⚠️ Gagal rename tabel Server:', err.message);
-        return;
-      }
+function ensureServerTableColumns() {
+  const expectedColumns = {
+    domain: "TEXT",
+    auth: "TEXT",
+    harga: "INTEGER DEFAULT 0",
+    harga_reseller: "INTEGER DEFAULT 0",
+    nama_server: "TEXT",
+    quota: "INTEGER DEFAULT 0",
+    iplimit: "INTEGER DEFAULT 0",
+    batas_create_akun: "INTEGER DEFAULT 0",
+    total_create_akun: "INTEGER DEFAULT 0"
+  };
 
-      // 2. Buat tabel baru dengan kolom tambahan (misal: harga_reseller)
-      db.run(`
-        CREATE TABLE Server (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          domain TEXT,
-          auth TEXT,
-          harga INTEGER DEFAULT 0,
-          harga_reseller INTEGER DEFAULT 0, -- kolom baru!
-          nama_server TEXT,
-          quota INTEGER DEFAULT 0,
-          iplimit INTEGER DEFAULT 0,
-          batas_create_akun INTEGER DEFAULT 0,
-          total_create_akun INTEGER DEFAULT 0
-        );
-      `, (err) => {
-        if (err) {
-          console.error('⚠️ Gagal membuat tabel Server baru:', err.message);
-          return;
-        }
+  db.all(`PRAGMA table_info(Server);`, (err, rows) => {
+    if (err) return console.error('❌ Gagal membaca struktur tabel Server:', err);
 
-        // 3. Copy hanya kolom yang ada di tabel lama
-        db.run(`
-          INSERT INTO Server (
-            id, domain, auth, harga, nama_server,
-            quota, iplimit, batas_create_akun, total_create_akun
-          )
-          SELECT
-            id, domain, auth, IFNULL(harga, 0), nama_server,
-            IFNULL(quota, 0), IFNULL(iplimit, 0),
-            IFNULL(batas_create_akun, 0), IFNULL(total_create_akun, 0)
-          FROM _old_Server;
-        `, (err) => {
+    const existingColumns = rows.map(row => row.name);
+
+    for (const [column, definition] of Object.entries(expectedColumns)) {
+      if (!existingColumns.includes(column)) {
+        const alterSQL = `ALTER TABLE Server ADD COLUMN ${column} ${definition}`;
+        db.run(alterSQL, (err) => {
           if (err) {
-            console.error('⚠️ Gagal transfer data ke tabel baru:', err.message);
-            return;
+            console.error(`❌ Gagal menambahkan kolom ${column}:`, err.message);
+          } else {
+            console.log(`✅ Kolom '${column}' berhasil ditambahkan ke tabel Server`);
           }
-
-          // 4. Drop tabel lama
-          db.run(`DROP TABLE _old_Server;`, (err) => {
-            if (err) {
-              console.error('⚠️ Gagal menghapus tabel lama _old_Server:', err.message);
-            } else {
-              console.log('✅ Migrasi tabel Server selesai dan kolom baru berhasil ditambahkan!');
-            }
-          });
         });
-      });
-    });
+      }
+    }
   });
 }
-
-// Panggil fungsi ini setelah koneksi db terbuka, misalnya:
-migrateServerTable(db);
 
 bot.command(['start', 'menu'], async (ctx) => {
   console.log('Start or Menu command received');
@@ -986,11 +957,8 @@ bot.command('changerole', async (ctx) => {
 bot.command('listusers', async (ctx) => {
   const users = await new Promise((resolve, reject) => {
     db.all('SELECT user_id, username, role, saldo, last_transaction_date, transaction_count FROM users', [], (err, rows) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(rows);
-      }
+      if (err) reject(err);
+      else resolve(rows);
     });
   });
 
@@ -998,19 +966,35 @@ bot.command('listusers', async (ctx) => {
     return ctx.reply('⚠️ Tidak ada pengguna yang terdaftar.', { parse_mode: 'Markdown' });
   }
 
-let message = '📜 <b>Daftar Pengguna</b> 📜\n\n';
-users.forEach((user, index) => {
-  message += `🔹 ${index + 1}. <b>ID:</b> <code> ${user.user_id}</code> \n` +
-             `   <b>Username:</b> ${user.username || 'Tidak ada'}\n` +
-             `   <b>Role:</b> ${user.role}\n` +
-             `   <b>Saldo:</b> Rp ${user.saldo}\n` +
-             `   <b>Transaksi Terakhir:</b> ${user.last_transaction_date || 'Belum ada'}\n` +
-             `   <b>Jumlah Transaksi:</b> ${user.transaction_count}\n\n`;
-});
+  let messages = [];
+  let currentMessage = '📜 <b>Daftar Pengguna</b> 📜\n\n';
 
-// Mengirim pesan dengan HTML
-await ctx.reply(message, { parse_mode: 'HTML' });
+  for (let i = 0; i < users.length; i++) {
+    const user = users[i];
+    const userText = 
+      `🔹 ${i + 1}. <b>ID:</b> <code>${user.user_id}</code>\n` +
+      `   <b>Username:</b> ${user.username || 'Tidak ada'}\n` +
+      `   <b>Role:</b> ${user.role}\n` +
+      `   <b>Saldo:</b> Rp ${user.saldo.toLocaleString('id-ID')}\n` +
+      `   <b>Transaksi Terakhir:</b> ${user.last_transaction_date || 'Belum ada'}\n` +
+      `   <b>Jumlah Transaksi:</b> ${user.transaction_count}\n\n`;
 
+    if ((currentMessage + userText).length > 4000) {
+      // Simpan pesan saat ini, mulai baru
+      messages.push(currentMessage);
+      currentMessage = '';
+    }
+
+    currentMessage += userText;
+  }
+
+  // Tambahkan sisa terakhir
+  if (currentMessage) messages.push(currentMessage);
+
+  // Kirim semua pesan satu per satu
+  for (const msg of messages) {
+    await ctx.reply(msg, { parse_mode: 'HTML' });
+  }
 });
 
 bot.command('ceksaldo', async (ctx) => {
