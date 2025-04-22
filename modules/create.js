@@ -136,7 +136,7 @@ ${vmessData.uuid}
 ┌─────────────────────
 │ Expiry: \`${vmessData.expired}\`
 │ Quota: \`${vmessData.quota === '0 GB' ? 'Unlimited' : vmessData.quota}\`
-│ IP Limit: \`${vmessData.ip_limit === '0' ? 'Unlimited' : vmessData.ip_limit} IP\`
+│ IP Limit: \`${vmessData.ip_limit === '0' ? 'Unlimited' : vmessData.ip_limit}\`
 └─────────────────────
 Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessData.username}.txt)
 ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
@@ -215,7 +215,7 @@ ${vlessData.uuid}
 ┌─────────────────────
 │ Expiry: \`${vlessData.expired}\`
 │ Quota: \`${vlessData.quota === '0 GB' ? 'Unlimited' : vlessData.quota}\`
-│ IP Limit: \`${vlessData.ip_limit === '0' ? 'Unlimited' : vlessData.ip_limit} IP\`
+│ IP Limit: \`${vlessData.ip_limit === '0' ? 'Unlimited' : vlessData.ip_limit}\`
 └─────────────────────
 Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessData.username}.txt)
 ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
@@ -293,7 +293,7 @@ ${trojanData.uuid}
 ┌─────────────────────
 │ Expiry: \`${trojanData.expired}\`
 │ Quota: \`${trojanData.quota === '0 GB' ? 'Unlimited' : trojanData.quota}\`
-│ IP Limit: \`${trojanData.ip_limit === '0' ? 'Unlimited' : trojanData.ip_limit} IP\`
+│ IP Limit: \`${trojanData.ip_limit === '0' ? 'Unlimited' : trojanData.ip_limit}\`
 └─────────────────────
 Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${trojanData.username}.txt)
 ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
@@ -369,7 +369,7 @@ ${shadowsocksData.uuid}
 ┌─────────────────────
 │ Expiry: \`${shadowsocksData.expired}\`
 │ Quota: \`${shadowsocksData.quota === '0 GB' ? 'Unlimited' : shadowsocksData.quota}\`
-│ IP Limit: \`${shadowsocksData.ip_limit === '0' ? 'Unlimited' : shadowsocksData.ip_limit} IP\`
+│ IP Limit: \`${shadowsocksData.ip_limit === '0' ? 'Unlimited' : shadowsocksData.ip_limit}\`
 └─────────────────────
 Save Account Link: [Save Account](https://${shadowsocksData.domain}:81/shadowsocks-${shadowsocksData.username}.txt)
 ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
