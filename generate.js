@@ -8,8 +8,16 @@ const accountCache = new Map();
 const bugOptions = [
   { label: 'XL VIDIO', value: 'quiz.vidio.com', wildcard: false },
   { label: 'XL EDU', value: '104.17.3.81', wildcard: false },
-  { label: 'TSEL ILPED WC', value: 'bakrie.ac.id', wildcard: true },
-  { label: 'XL XCV WC', value: 'ava.game.naver.com', wildcard: true }
+  { label: 'XL VIU WC', value: 'zaintest.vuclip.com', wildcard: true },
+  { label: 'XL FB', value: 'investor.fb.com', wildcard: true },
+  { label: 'XL XCV WC', value: 'ava.game.naver.com', wildcard: true },
+  { label: 'ISAT EDU WEBEX WC', value: 'blog.webex.com', wildcard: true },
+  { label: 'CONFRECE ZOOM WS', value: 'support.zoom.us', wildcard: true },
+  { label: 'IG WC', value: 'graph.instagram.com', wildcard: true },
+  { label: 'TSEL ILPED WC Bakrie', value: 'bakrie.ac.id', wildcard: true },
+  { label: 'TSEL ILPED WC Unes', value: 'unnes.ac.id', wildcard: true },
+  { label: 'TSEL ILPED WC midtrans', value: 'api.midtrans.com', wildcard: true },
+  { label: 'RUANGGURU WC', value: 'ads.ruangguru.com', wildcard: true }
 ];
 
 function parseVMess(uri) {
@@ -32,58 +40,80 @@ function parseVlessTrojan(uri) {
     sni: u.searchParams.get('sni') || ''
   };
 }
-
 function generateYAML(type, cfg) {
-  switch (type) {
-    case 'vmess':
-      return yaml.dump({
-        name: cfg.ps,
-        type: 'vmess',
-        server: cfg.add,
-        port: parseInt(cfg.port, 10),
-        uuid: cfg.id,
-        alterId: cfg.aid || 0,
-        cipher: 'auto',
-        tls: cfg.tls === 'tls',
-        network: cfg.net,
-        wsOpts: cfg.net === 'ws' ? {
-          path: cfg.path,
-          headers: { Host: cfg.host }
-        } : undefined
-      });
-    case 'vless':
-      return yaml.dump({
-        name: cfg.ps,
-        type: 'vless',
-        server: cfg.add,
-        port: parseInt(cfg.port, 10),
-        uuid: cfg.id,
-        cipher: 'none',
-        tls: cfg.tls === 'tls',
-        network: cfg.net,
-        wsOpts: cfg.net === 'ws' ? {
-          path: cfg.path,
-          headers: { Host: cfg.host }
-        } : undefined,
-        sni: cfg.sni
-      });
-	case 'trojan':
-	  return yaml.dump({
-		name: cfg.ps,
-		type: 'trojan',
-		server: cfg.add,
-		port: parseInt(cfg.port, 10),
-		password: cfg.id,
-		network: cfg.net,
-		sni: cfg.sni,
-		wsOpts: cfg.net === 'ws' ? {
-		  path: cfg.path,
-		  headers: { Host: cfg.host }
-		} : undefined
-	  });
-    default:
-      return 'Unsupported protocol';
+  let proxy = {
+    name: cfg.ps || 'Unnamed',
+    server: cfg.add,
+    port: parseInt(cfg.port, 10),
+    type,
+  };
+
+  if (type === 'vmess') {
+    Object.assign(proxy, {
+      uuid: cfg.id,
+      alterId: cfg.aid ? parseInt(cfg.aid) : 0,
+      cipher: 'auto',
+      tls: cfg.tls === 'tls',
+      'skip-cert-verify': true,
+      servername: cfg.sni || cfg.host || cfg.add,
+      network: cfg.net || 'tcp',
+    });
+
+    if (cfg.net === 'ws') {
+      proxy['ws-opts'] = {
+        path: cfg.path || '/',
+        headers: {
+          Host: cfg.host || cfg.add
+        }
+      };
+    }
+
+    proxy.udp = true;
   }
+
+  else if (type === 'vless') {
+    Object.assign(proxy, {
+      uuid: cfg.id,
+      tls: cfg.tls === 'tls',
+      'skip-cert-verify': true,
+      servername: cfg.sni || cfg.host || cfg.add,
+      network: cfg.net || 'tcp',
+    });
+
+    if (cfg.net === 'ws') {
+      proxy['ws-opts'] = {
+        path: cfg.path || '/',
+        headers: {
+          Host: cfg.host || cfg.add
+        }
+      };
+    }
+
+    proxy.udp = true;
+  }
+
+  else if (type === 'trojan') {
+    Object.assign(proxy, {
+      password: cfg.id,
+      tls: cfg.tls === 'tls',
+      'skip-cert-verify': true,
+      servername: cfg.sni || cfg.host || cfg.add,
+      network: cfg.net || 'tcp',
+    });
+
+    if (cfg.net === 'ws') {
+      proxy['ws-opts'] = {
+        path: cfg.path || '/',
+        headers: {
+          Host: cfg.host || cfg.add
+        }
+      };
+    }
+
+    proxy.udp = true;
+  }
+
+  return yaml.dump({ proxies: [proxy] }, { lineWidth: -1 });
 }
 
 function injectBugSmart(cfg, bug, wildcard = false) {
@@ -124,39 +154,53 @@ async function handleGenerateURI(bot, ctx, text) {
 }
 
 function initGenerateBug(bot) {
+  // Fungsi bantu buat bikin 2 kolom per baris
+  function chunkArray(arr, size) {
+    const chunked = [];
+    for (let i = 0; i < arr.length; i += size) {
+      chunked.push(arr.slice(i, i + size));
+    }
+    return chunked;
+  }
+
   bot.action(/start_bug_(\d+)/, async (ctx) => {
     const userId = +ctx.match[1];
     if (!accountCache.has(userId)) return ctx.reply('⚠️ Data tidak ditemukan');
     await ctx.answerCbQuery(); await ctx.editMessageReplyMarkup();
-    await ctx.reply('Pilih bug untuk URI:', Markup.inlineKeyboard(
-      bugOptions.map(b => [Markup.button.callback(b.label, `uri_bug_${userId}_${b.value}|${b.wildcard}`)])
-    ));
+
+    const buttons = bugOptions.map(b =>
+      Markup.button.callback(b.label, `uri_bug_${userId}_${b.value}|${b.wildcard}`)
+    );
+    await ctx.reply('Pilih bug untuk URI:', Markup.inlineKeyboard(chunkArray(buttons, 2)));
   });
 
   bot.action(/start_convert_(\d+)/, async (ctx) => {
     const userId = +ctx.match[1];
     if (!accountCache.has(userId)) return ctx.reply('⚠️ Data tidak ditemukan');
     await ctx.answerCbQuery(); await ctx.editMessageReplyMarkup();
-    await ctx.reply('Pilih bug untuk YAML:', Markup.inlineKeyboard(
-      bugOptions.map(b => [Markup.button.callback(b.label, `yaml_bug_${userId}_${b.value}|${b.wildcard}`)])
-    ));
+
+    const buttons = bugOptions.map(b =>
+      Markup.button.callback(b.label, `yaml_bug_${userId}_${b.value}|${b.wildcard}`)
+    );
+    await ctx.reply('Pilih bug untuk YAML:', Markup.inlineKeyboard(chunkArray(buttons, 2)));
   });
-bot.action(/uri_bug_(\d+)_(.+)/, async (ctx) => {
-  const userId = +ctx.match[1];
-  const [bug, wildcardFlag] = ctx.match[2].split('|');
-  const isWildcard = wildcardFlag === 'true';
 
-  const data = accountCache.get(userId);
-  if (!data) return ctx.reply('⚠️ Data tidak ditemukan');
-  await ctx.answerCbQuery(); await ctx.editMessageReplyMarkup();
+  bot.action(/uri_bug_(\d+)_(.+)/, async (ctx) => {
+    const userId = +ctx.match[1];
+    const [bug, wildcardFlag] = ctx.match[2].split('|');
+    const isWildcard = wildcardFlag === 'true';
 
-  const modified = injectBugSmart(data.config, bug, isWildcard);
+    const data = accountCache.get(userId);
+    if (!data) return ctx.reply('⚠️ Data tidak ditemukan');
+    await ctx.answerCbQuery(); await ctx.editMessageReplyMarkup();
 
-  const uri = data.raw.startsWith('vmess://')
-    ? 'vmess://' + Buffer.from(JSON.stringify(modified)).toString('base64')
-    : `${data.type}://${modified.id}@${modified.add}:${modified.port}?type=${modified.net}&path=${modified.path}&host=${modified.host}&security=${modified.tls}&sni=${modified.sni}#${encodeURIComponent(modified.ps)}`;
+    const modified = injectBugSmart(data.config, bug, isWildcard);
 
-  await ctx.replyWithHTML(`✅ <b>GENERATE ACCOUNT SUCCESS by KEDAIVPN</b>
+    const uri = data.raw.startsWith('vmess://')
+      ? 'vmess://' + Buffer.from(JSON.stringify(modified)).toString('base64')
+      : `${data.type}://${modified.id}@${modified.add}:${modified.port}?type=${modified.net}&path=${modified.path}&host=${modified.host}&security=${modified.tls}&sni=${modified.sni}#${encodeURIComponent(modified.ps)}`;
+
+    await ctx.replyWithHTML(`✅ <b>GENERATE ACCOUNT SUCCESS by NewbieStore</b>
 
 <b>🔧 Detail:</b>
 • <b>Protocol:</b> ${data.type.toUpperCase()}
@@ -170,21 +214,21 @@ bot.action(/uri_bug_(\d+)_(.+)/, async (ctx) => {
 
 <b>🔗 URI:</b>
 <pre>${uri}</pre>`);
-});
+  });
 
-bot.action(/yaml_bug_(\d+)_(.+)/, async (ctx) => {
-  const userId = +ctx.match[1];
-  const [bug, wildcardFlag] = ctx.match[2].split('|');
-  const isWildcard = wildcardFlag === 'true';
+  bot.action(/yaml_bug_(\d+)_(.+)/, async (ctx) => {
+    const userId = +ctx.match[1];
+    const [bug, wildcardFlag] = ctx.match[2].split('|');
+    const isWildcard = wildcardFlag === 'true';
 
-  const data = accountCache.get(userId);
-  if (!data) return ctx.reply('⚠️ Data tidak ditemukan');
-  await ctx.answerCbQuery(); await ctx.editMessageReplyMarkup();
+    const data = accountCache.get(userId);
+    if (!data) return ctx.reply('⚠️ Data tidak ditemukan');
+    await ctx.answerCbQuery(); await ctx.editMessageReplyMarkup();
 
-  const modified = injectBugSmart(data.config, bug, isWildcard);
-  const yamlData = generateYAML(data.type, modified);
+    const modified = injectBugSmart(data.config, bug, isWildcard);
+    const yamlData = generateYAML(data.type, modified);
 
-  await ctx.replyWithHTML(`✅ <b>CONVERT TO YAML SUCCESS by KEDAIVPN:</b> <code>${bug}</code>
+    await ctx.replyWithHTML(`✅ <b>CONVERT TO YAML SUCCESS by Newbie Store</b> 
 
 <b>🔧 Detail:</b>
 • <b>Protocol:</b> ${data.type.toUpperCase()}
@@ -197,7 +241,7 @@ bot.action(/yaml_bug_(\d+)_(.+)/, async (ctx) => {
 
 <b>🔗 YAML:</b>
 <pre>${yamlData}</pre>`);
-});
+  });
 }
 
 module.exports = { initGenerateBug, handleGenerateURI };
