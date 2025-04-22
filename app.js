@@ -835,21 +835,21 @@ const messageText = `
 ⭕ <b>Status:</b> ${role === 'reseller' ? 'Reseller 🛍️' : '👤 Member'}  
 💵 <b>Saldo:</b> Rp ${formattedSaldo}
 
-<b>┅┅┅┅┅┅┅ INFO SERVER ┅┅┅┅┅┅┅</b>  
+<b>┅┅┅┅┅┅┅ INFO PANEL ┅┅┅┅┅┅┅</b>  
 🌐 <b>Server Tersedia:</b> ${jumlahServer}  
 👥 <b>Total Pengguna:</b> ${jumlahPengguna}  
 📊 <b>Akun (30 Hari):</b> ${totalAkun30Hari}  
 🌍 <b>Akun Global:</b> ${totalAkunGlobal}  
 
-<b>┅┅┅┅┅ TRIAL HARI INI ┅┅┅┅┅┅┅</b>  
+<b>┅┅┅┅┅┅ TRIAL HARI INI ┅┅┅┅┅┅┅</b>  
 ❇️ <b>Max 2x Sehari</b>  
 🔁 <b>Trial Anda:</b> ${trialHariIni}/2  
 
-<b>┅┅┅┅┅┅ TOP 3 CREATOR ┅┅┅┅┅┅</b>  
+<b>┅┅┅┅┅┅ TOP 3 CREATOR ┅┅┅┅┅┅┅</b>  
 🏆 <b>(30 Hari Terakhir)</b>  
 ${rankingText}  
 
-<b>┅┅┅┅┅┅ KONTAK ADMIN ┅┅┅┅┅┅</b>
+<b>┅┅┅┅┅┅ KONTAK ADMIN ┅┅┅┅┅┅┅</b>
 ☏ <a href="https://t.me/kedai_vpn">Telegram</a>  
 ☏ <a href="https://wa.me/6287777694482">WhatsApp</a>  
 <b>┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅</b>
