@@ -200,7 +200,7 @@ function initGenerateBug(bot) {
       ? 'vmess://' + Buffer.from(JSON.stringify(modified)).toString('base64')
       : `${data.type}://${modified.id}@${modified.add}:${modified.port}?type=${modified.net}&path=${modified.path}&host=${modified.host}&security=${modified.tls}&sni=${modified.sni}#${encodeURIComponent(modified.ps)}`;
 
-    await ctx.replyWithHTML(`✅ <b>GENERATE ACCOUNT SUCCESS by NewbieStore</b>
+    await ctx.replyWithHTML(`✅ <b>𝐆𝐞𝐧𝐞𝐫𝐚𝐭𝐞 𝐛𝐮𝐠 𝐡𝐚𝐬 𝐛𝐞𝐞𝐧 𝐬𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥</b>
 
 <b>🔧 Detail:</b>
 • <b>Protocol:</b> ${data.type.toUpperCase()}
@@ -228,7 +228,7 @@ function initGenerateBug(bot) {
     const modified = injectBugSmart(data.config, bug, isWildcard);
     const yamlData = generateYAML(data.type, modified);
 
-    await ctx.replyWithHTML(`✅ <b>CONVERT TO YAML SUCCESS by Newbie Store</b> 
+    await ctx.replyWithHTML(`✅ <b>𝐂𝐨𝐧𝐯𝐞𝐫𝐭 𝐭𝐨 𝐲𝐚𝐦𝐥 𝐡𝐚𝐬 𝐛𝐞𝐞𝐧 𝐬𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥</b> 
 
 <b>🔧 Detail:</b>
 • <b>Protocol:</b> ${data.type.toUpperCase()}
