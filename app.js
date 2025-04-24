@@ -5,6 +5,12 @@ const crypto = require('crypto');
 const { Telegraf, Scenes, session } = require('telegraf');
 const topUpQueue = require('./queue');
 const { initGenerateBug, handleGenerateURI } = require('./generate');
+const {
+  saveUserAccount,
+  updateUserAccountCreation,
+  updateAccountRenewal,
+  showRenewableAccountsByServer
+} = require('./lib/userTracking');
 
 
 const app = express();
@@ -59,8 +65,8 @@ db.run(`CREATE TABLE IF NOT EXISTS Server (
     console.log('Server table created or already exists');
   }
 });
-
-db.run(`CREATE TABLE IF NOT EXISTS users (
+// Cek dan buat tabel deposit_bonus_rules jika belum ada
+const createUsersTable = `CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER UNIQUE,
   username TEXT,
@@ -72,27 +78,46 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
   last_account_creation_date TEXT,
   last_transaction_date TEXT,
   accounts_created_30days INTEGER DEFAULT 0,
-  trial_count INTEGER DEFAULT 0, 
+  trial_count INTEGER DEFAULT 0,
   last_trial_date TEXT DEFAULT NULL,
+  sudah_dapat_bonus_first INTEGER DEFAULT 0,
   CONSTRAINT unique_user_id UNIQUE (user_id)
-)`, (err) => {
-  if (err) {
-    console.error('Kesalahan membuat tabel users:', err.message);
-  } else {
-    console.log('Users table created or already exists');
-  }
+)`;
+db.run(createUsersTable, (err) => {
+  if (err) console.error('Gagal membuat tabel users:', err.message);
 });
 
+// User Accounts Table
+const createUserAccountsTable = `CREATE TABLE IF NOT EXISTS user_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT,
+  username TEXT,
+  jenis TEXT,
+  server_id INTEGER,
+  expired TEXT,
+  created_at TEXT,
+  price INTEGER,
+  duration_days INTEGER
+)`;
+db.run(createUserAccountsTable, (err) => {
+  if (err) console.error('Gagal membuat tabel user_accounts:', err.message);
+});
 
-ensureUserTableColumns();
-ensureServerTableColumns();
-const userState = {};
-console.log('User state initialized');
+// Bonus Rules Table
+const createBonusRulesTable = `CREATE TABLE IF NOT EXISTS deposit_bonus_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  jenis_bonus TEXT CHECK(jenis_bonus IN ('first', 'period')) NOT NULL,
+  min_deposit INTEGER NOT NULL,
+  bonus_percent INTEGER NOT NULL,
+  is_active INTEGER DEFAULT 1,
+  start_date TEXT,
+  end_date TEXT
+)`;
+db.run(createBonusRulesTable, (err) => {
+  if (err) console.error('Gagal membuat tabel deposit_bonus_rules:', err.message);
+});
 
-const userSessions = {}; // Simpan message_id terakhir untuk setiap user
-
-const userMessages = {}; // Menyimpan message_id terakhir untuk setiap user
-
+// ✅ Penyesuaian kolom tabel users jika belum ada
 async function ensureUserTableColumns() {
   const expectedColumns = {
     username: "TEXT",
@@ -104,14 +129,13 @@ async function ensureUserTableColumns() {
     last_transaction_date: "TEXT",
     accounts_created_30days: "INTEGER DEFAULT 0",
     trial_count: "INTEGER DEFAULT 0",
-    last_trial_date: "TEXT DEFAULT NULL"
+    last_trial_date: "TEXT DEFAULT NULL",
+    sudah_dapat_bonus_first: "INTEGER DEFAULT 0"
   };
 
   db.all(`PRAGMA table_info(users);`, (err, rows) => {
     if (err) return console.error('Gagal membaca struktur tabel users:', err);
-
     const existingColumns = rows.map(row => row.name);
-
     for (const [column, definition] of Object.entries(expectedColumns)) {
       if (!existingColumns.includes(column)) {
         const alterSQL = `ALTER TABLE users ADD COLUMN ${column} ${definition}`;
@@ -126,7 +150,6 @@ async function ensureUserTableColumns() {
     }
   });
 }
-
 function ensureServerTableColumns() {
   const expectedColumns = {
     domain: "TEXT",
@@ -159,7 +182,14 @@ function ensureServerTableColumns() {
     }
   });
 }
+ensureUserTableColumns();
+ensureServerTableColumns();
+const userState = {};
+console.log('User state initialized');
 
+const userSessions = {}; // Simpan message_id terakhir untuk setiap user
+
+const userMessages = {}; // Menyimpan message_id terakhir untuk setiap user
 bot.command(['start', 'menu'], async (ctx) => {
   console.log('Start or Menu command received');
 
@@ -345,24 +375,42 @@ const resetAccountsCreated30Days = async () => {
 // Jalankan reset setiap 24 jam (untuk memeriksa secara berkala)
 setInterval(resetAccountsCreated30Days, 24 * 60 * 60 * 1000);
 
-async function updateUserAccountCreation(userId) {
-  const currentDate = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+async function cekDanHitungBonusDeposit(userId, nominalDeposit) {
+  return new Promise((resolve) => {
+    db.all(`SELECT * FROM deposit_bonus_rules WHERE is_active = 1`, async (err, rules) => {
+      if (err || !rules || rules.length === 0) return resolve(0);
 
-  await new Promise((resolve, reject) => {
-    db.run(
-      'UPDATE users SET accounts_created_30days = accounts_created_30days + 1, total_accounts_created = total_accounts_created + 1, last_account_creation_date = ? WHERE user_id = ?',
-      [currentDate, userId],
-      (err) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
+      let maxBonus = 0;
+
+      for (const rule of rules) {
+        if (parseInt(nominalDeposit) < rule.min_deposit) continue;
+
+        // Bonus tipe "first"
+        if (rule.jenis_bonus === 'first') {
+          const user = await new Promise((res) =>
+            db.get(`SELECT sudah_dapat_bonus_first FROM users WHERE user_id = ?`, [userId], (err, row) => res(row))
+          );
+
+          if (!user || user.sudah_dapat_bonus_first) continue;
+
+          const bonus = Math.floor((nominalDeposit * rule.bonus_percent) / 100);
+          if (bonus > maxBonus) maxBonus = bonus;
+        }
+
+        // Bonus tipe "period"
+        if (rule.jenis_bonus === 'period') {
+          const now = new Date().toISOString().split('T')[0];
+          if (rule.start_date <= now && now <= rule.end_date) {
+            const bonus = Math.floor((nominalDeposit * rule.bonus_percent) / 100);
+            if (bonus > maxBonus) maxBonus = bonus;
+          }
         }
       }
-    );
+
+      resolve(maxBonus);
+    });
   });
 }
-
 
 
 async function getAccountCreationRanking() {
@@ -896,6 +944,7 @@ bot.command('helpadmin', async (ctx) => {
 17. /upgrade_reseller - Mengubah Role Member ke Reseller.
 18. /listusers - Melihat Detail Semua User.
 19. /editreseller - Mengedit Harga Reseller.
+20. /addbonus - Mengatur Bonus Deposit.
 
 Gunakan perintah ini dengan format yang benar untuk menghindari kesalahan.
 `;
@@ -995,6 +1044,19 @@ bot.command('listusers', async (ctx) => {
   for (const msg of messages) {
     await ctx.reply(msg, { parse_mode: 'HTML' });
   }
+});
+bot.command('addbonus', async (ctx) => {
+  userState[ctx.chat.id] = { step: 'bonus_jenis_menu' };
+
+  const keyboard = [
+    [{ text: '🆕 Deposit Pertama', callback_data: 'bonus_jenis_first' }],
+    [{ text: '📅 Periode Tertentu', callback_data: 'bonus_jenis_period' }]
+  ];
+
+  await ctx.reply('🎁 *Pilih jenis bonus deposit yang ingin ditambahkan:*', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: keyboard }
+  });
 });
 
 bot.command('ceksaldo', async (ctx) => {
@@ -1153,6 +1215,89 @@ bot.command('send', async (ctx) => {
         });
     }
 });
+bot.action('bonus_deposit_menu', async (ctx) => {
+const keyboard = [
+  [{ text: '➕ Tambah Bonus Baru', callback_data: 'add_bonus_deposit' }],
+  [{ text: '📃 Lihat Bonus Aktif', callback_data: 'lihat_bonus_deposit' }],
+  [
+    { text: '❌ Nonaktifkan Bonus Pertama', callback_data: 'disable_bonus_first' },
+    { text: '❌ Nonaktifkan Bonus Periode', callback_data: 'disable_bonus_period' }
+  ],
+  [{ text: '🔙 Kembali ke Menu Admin', callback_data: 'admin_menu' }]
+];
+
+  await ctx.editMessageText('🎁 *Kelola Bonus Deposit*\nSilakan pilih aksi yang ingin Anda lakukan:', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: keyboard }
+  });
+});
+
+bot.action('add_bonus_deposit', async (ctx) => {
+  userState[ctx.chat.id] = { step: 'bonus_jenis' };
+
+  const keyboard = [
+    [{ text: '🆕 Deposit Pertama', callback_data: 'bonus_jenis_first' }],
+    [{ text: '📅 Periode Tertentu', callback_data: 'bonus_jenis_period' }],
+    [{ text: '🔙 Kembali', callback_data: 'bonus_deposit_menu' }]
+  ];
+
+  await ctx.editMessageText('📌 *Pilih jenis bonus yang ingin ditambahkan:*', {
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: keyboard }
+  });
+});
+
+bot.action('lihat_bonus_deposit', async (ctx) => {
+  db.all(`SELECT * FROM deposit_bonus_rules WHERE is_active = 1`, (err, rows) => {
+    if (err) {
+      console.error('❌ Gagal mengambil data bonus:', err.message);
+      return ctx.reply('❌ *Gagal menampilkan bonus aktif.*', { parse_mode: 'Markdown' });
+    }
+
+    if (!rows || rows.length === 0) {
+      return ctx.reply('⚠️ *Tidak ada bonus deposit yang aktif saat ini.*', { parse_mode: 'Markdown' });
+    }
+
+    let msg = '🎁 *Daftar Bonus Aktif:*\n\n';
+
+    rows.forEach((bonus) => {
+      msg += `🆔 *ID*: ${bonus.id}\n`;
+      msg += `📌 *Jenis*: ${bonus.jenis_bonus === 'first' ? 'Deposit Pertama' : 'Periode'}\n`;
+      msg += `💰 *Min Deposit*: Rp ${bonus.min_deposit.toLocaleString('id-ID')}\n`;
+      msg += `🎉 *Bonus*: ${bonus.bonus_percent}%\n`;
+
+      if (bonus.jenis_bonus === 'period') {
+        msg += `📅 *Periode*: ${bonus.start_date} s.d. ${bonus.end_date}\n`;
+      }
+
+      msg += '──────────────\n';
+    });
+
+    ctx.reply(msg, { parse_mode: 'Markdown' });
+  });
+});
+
+bot.action('disable_bonus_first', async (ctx) => {
+  db.run(`UPDATE deposit_bonus_rules SET is_active = 0 WHERE jenis_bonus = 'first'`, (err) => {
+    if (err) {
+      console.error('❌ Gagal menonaktifkan bonus pertama:', err.message);
+      return ctx.reply('❌ *Gagal menonaktifkan bonus pertama. Coba lagi nanti.*', { parse_mode: 'Markdown' });
+    }
+
+    ctx.reply('✅ *Bonus deposit pertama telah dinonaktifkan.*', { parse_mode: 'Markdown' });
+  });
+});
+
+bot.action('disable_bonus_period', async (ctx) => {
+  db.run(`UPDATE deposit_bonus_rules SET is_active = 0 WHERE jenis_bonus = 'period'`, (err) => {
+    if (err) {
+      console.error('❌ Gagal menonaktifkan bonus periode:', err.message);
+      return ctx.reply('❌ *Gagal menonaktifkan bonus periode. Coba lagi nanti.*', { parse_mode: 'Markdown' });
+    }
+
+    ctx.reply('✅ *Bonus deposit periode telah dinonaktifkan.*', { parse_mode: 'Markdown' });
+  });
+});
 
 bot.action('main_menu', async (ctx) => {
   if (!ctx || !ctx.match) {
@@ -1179,6 +1324,17 @@ bot.action('cek_saldo_semua', async (ctx) => {
   }
 
   await handleCekSaldoSemua(ctx, userId);
+});
+bot.action(/^bonus_jenis_(first|period)$/, async (ctx) => {
+  const jenis = ctx.match[1];
+  userState[ctx.chat.id] = {
+    step: 'bonus_min_deposit',
+    jenis_bonus: jenis
+  };
+
+  await ctx.editMessageText(`💵 *Masukkan minimal deposit (dalam angka, tanpa titik/koma):*`, {
+    parse_mode: 'Markdown'
+  });
 });
 
 bot.action(/^broadcast_(\d+)_(.+)$/, async (ctx) => {
@@ -1296,38 +1452,46 @@ bot.command('addsaldo', async (ctx) => {
   }
 
   const targetUserId = parseInt(args[1]);
-  const amount = parseInt(args[2]);
+  const nominal = parseInt(args[2]);
 
-  if (isNaN(targetUserId) || isNaN(amount)) {
+  if (isNaN(targetUserId) || isNaN(nominal)) {
     return ctx.reply('⚠️ `user_id` dan `jumlah` harus berupa angka.', { parse_mode: 'Markdown' });
   }
 
-  if (amount < 0) {
+  if (nominal < 0) {
     return ctx.reply('⚠️ Jumlah saldo tidak boleh negatif.', { parse_mode: 'Markdown' });
   }
 
   try {
-    // Tambahkan saldo ke pengguna
-    db.run('UPDATE users SET saldo = saldo + ? WHERE user_id = ?', [amount, targetUserId], async (err) => {
+    // Cek bonus saldo
+    const bonus = await cekDanHitungBonusDeposit(targetUserId, nominal);
+    const totalSaldo = nominal + bonus;
+
+    db.run('UPDATE users SET saldo = saldo + ?, sudah_dapat_bonus_first = sudah_dapat_bonus_first OR ? WHERE user_id = ?', [totalSaldo, bonus > 0 ? 1 : 0, targetUserId], async (err) => {
       if (err) {
-        console.error('Kesalahan saat menambahkan saldo:', err.message);
-        return ctx.reply('⚠️ Kesalahan saat menambahkan saldo.', { parse_mode: 'Markdown' });
+        console.error('❌ Gagal menambahkan saldo:', err.message);
+        return ctx.reply('❌ Terjadi kesalahan saat menambahkan saldo.', { parse_mode: 'Markdown' });
       }
 
-      // Cek dan upgrade ke reseller jika saldo >= 25.000
-      if (amount >= 25000) {
+      // Cek & update role jika memenuhi syarat
+      if (totalSaldo >= 25000) {
         await checkAndUpdateUserRole(targetUserId);
       }
 
-      // Notifikasi ke pengguna
-      await ctx.telegram.sendMessage(targetUserId, `✅ Saldo sebesar Rp${amount} telah ditambahkan ke akun Anda.`, { parse_mode: 'Markdown' });
+      // Notifikasi ke user
+      let notif = `✅ *Saldo telah ditambahkan!*\n\n📥 Tambahan: *Rp ${nominal.toLocaleString('id-ID')}*`;
+      if (bonus > 0) {
+        notif += `\n🎁 Bonus: *Rp ${bonus.toLocaleString('id-ID')}*`;
+        notif += `\n💰 Total Masuk: *Rp ${totalSaldo.toLocaleString('id-ID')}*`;
+      }
+      await ctx.telegram.sendMessage(targetUserId, notif, { parse_mode: 'Markdown' });
 
       // Notifikasi ke admin
-      await ctx.reply(`✅ Saldo sebesar Rp${amount} berhasil ditambahkan ke user dengan ID ${targetUserId}.`, { parse_mode: 'Markdown' });
+      await ctx.reply(`✅ Saldo berhasil ditambahkan ke user ID ${targetUserId}.\n💸 Total Masuk: *Rp ${totalSaldo.toLocaleString('id-ID')}*`, { parse_mode: 'Markdown' });
 
       // Notifikasi ke grup
       const username = await getUsernameById(targetUserId);
-      await sendGroupNotificationTopup(username, targetUserId, amount, amount);
+      await sendGroupNotificationTopup(username, targetUserId, nominal, bonus);
     });
   } catch (error) {
     console.error('🚫 Kesalahan saat menambahkan saldo:', error);
@@ -1906,6 +2070,9 @@ async function sendAdminMenu(ctx) {
       { text: 'ℹ️ Detail Server', callback_data: 'detailserver' }
     ],
     [
+      { text: '🎁 Bonus Deposit', callback_data: 'bonus_deposit_menu' }
+    ],
+    [
       { text: '🔙 Kembali ke Main Menu', callback_data: 'send_main_menu' }
     ]
   ];
@@ -2176,10 +2343,11 @@ bot.action(/navigate_(\w+)_(\w+)_(\d+)/, async (ctx) => {
   const [, action, type, page] = ctx.match;
   await startSelectServer(ctx, action, type, parseInt(page, 10));
 });
-bot.action(/(create|renew)_username_(vmess|vless|trojan|shadowsocks|ssh)_(.+)/, async (ctx) => {
-  const action = ctx.match[1];
-  const type = ctx.match[2];
-  const serverId = ctx.match[3];
+bot.action(/create_username_(vmess|vless|trojan|shadowsocks|ssh)_(.+)/, async (ctx) => {
+  const type = ctx.match[1]; // ✅ ini tipe (vmess, etc)
+  const serverId = ctx.match[2]; // ✅ ini server ID
+  const action = 'create'; // ✅ set manual karena udah jelas dari route-nya
+
   userState[ctx.chat.id] = { step: `username_${action}_${type}`, serverId, type, action };
 
   db.get('SELECT batas_create_akun, total_create_akun FROM Server WHERE id = ?', [serverId], async (err, server) => {
@@ -2200,6 +2368,28 @@ bot.action(/(create|renew)_username_(vmess|vless|trojan|shadowsocks|ssh)_(.+)/, 
     }
 
     await ctx.reply('👤 *Masukkan username:*', { parse_mode: 'Markdown' });
+  });
+});
+
+bot.action(/^renew_username_(vmess|vless|trojan|shadowsocks|ssh)_(.+)/, async (ctx) => {
+  const type = ctx.match[1];
+  const serverId = ctx.match[2];
+
+  await showRenewableAccountsByServer(ctx, type, parseInt(serverId));
+});
+bot.action(/^renew_username_selected_(.+)_(.+)_(\d+)$/, async (ctx) => {
+  const [, username, type, serverId] = ctx.match;
+
+  userState[ctx.chat.id] = {
+    step: `exp_renew_${type}`,
+    username,
+    type,
+    serverId,
+    action: 'renew'
+  };
+
+  await ctx.reply('⏳ *Masukkan masa aktif (hari) untuk perpanjangan akun:*', {
+    parse_mode: 'Markdown'
   });
 });
 
@@ -2376,10 +2566,87 @@ bot.on('text', async (ctx) => {
   const state = userState[ctx.chat.id];
   console.log('🧠 State ditemukan:', state);
 
-  if (!state) {
-    console.log('⚠️ Tidak ada state, menghentikan proses.');
-    return;
+if (!state) {
+  console.log('⚠️ Tidak ada state, menghentikan proses.');
+  return;
+}
+
+if (state.step === 'bonus_min_deposit') {
+  const min = parseInt(ctx.message.text.trim());
+
+  if (isNaN(min) || min <= 0) {
+    return ctx.reply('⚠️ *Masukkan angka yang valid untuk minimal deposit.*', { parse_mode: 'Markdown' });
   }
+
+  state.min_deposit = min;
+  state.step = 'bonus_percent';
+
+  return ctx.reply('🎁 *Masukkan persentase bonus (tanpa simbol %, contoh: 50):*', { parse_mode: 'Markdown' });
+}
+
+if (state.step === 'bonus_percent') {
+  const percent = parseInt(ctx.message.text.trim());
+
+  if (isNaN(percent) || percent < 1 || percent > 100) {
+    return ctx.reply('⚠️ *Persentase bonus harus antara 1 dan 100.*', { parse_mode: 'Markdown' });
+  }
+
+  state.bonus_percent = percent;
+
+  if (state.jenis_bonus === 'period') {
+    state.step = 'bonus_start_date';
+    return ctx.reply('📅 *Masukkan tanggal mulai bonus (format: YYYY-MM-DD):*', { parse_mode: 'Markdown' });
+  } else {
+    // Simpan bonus first deposit langsung
+    db.run(`INSERT INTO deposit_bonus_rules (jenis_bonus, min_deposit, bonus_percent, is_active)
+            VALUES (?, ?, ?, ?)`,
+      ['first', state.min_deposit, state.bonus_percent, 1],
+      (err) => {
+        delete userState[ctx.chat.id];
+
+        if (err) {
+          console.error('❌ Gagal menyimpan bonus first deposit:', err.message);
+          return ctx.reply('❌ *Gagal menyimpan bonus. Coba lagi.*', { parse_mode: 'Markdown' });
+        }
+
+        ctx.reply('✅ *Bonus deposit pertama berhasil ditambahkan!*', { parse_mode: 'Markdown' });
+      });
+  }
+}
+
+if (state.step === 'bonus_start_date') {
+  const date = ctx.message.text.trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return ctx.reply('⚠️ *Format tanggal tidak valid. Gunakan format YYYY-MM-DD.*', { parse_mode: 'Markdown' });
+  }
+
+  state.start_date = date;
+  state.step = 'bonus_end_date';
+  return ctx.reply('📅 *Masukkan tanggal akhir bonus (format: YYYY-MM-DD):*', { parse_mode: 'Markdown' });
+}
+
+if (state.step === 'bonus_end_date') {
+  const endDate = ctx.message.text.trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+    return ctx.reply('⚠️ *Format tanggal tidak valid. Gunakan format YYYY-MM-DD.*', { parse_mode: 'Markdown' });
+  }
+
+  db.run(`INSERT INTO deposit_bonus_rules (jenis_bonus, min_deposit, bonus_percent, start_date, end_date, is_active)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    ['period', state.min_deposit, state.bonus_percent, state.start_date, endDate, 1],
+    (err) => {
+      delete userState[ctx.chat.id];
+
+      if (err) {
+        console.error('❌ Gagal menyimpan bonus periode:', err.message);
+        return ctx.reply('❌ *Gagal menyimpan bonus periode. Coba lagi.*', { parse_mode: 'Markdown' });
+      }
+
+      ctx.reply('✅ *Bonus deposit periode berhasil ditambahkan!*', { parse_mode: 'Markdown' });
+    });
+}
 
 if (state.step === 'input_harga') {
   console.log('🛠️ Masuk ke step input_harga');
@@ -2452,18 +2719,17 @@ if (state.step === 'input_harga') {
     }
     state.step = `exp_${state.action}_${state.type}`;
     await ctx.reply('⏳ *Masukkan masa aktif (hari):*', { parse_mode: 'Markdown' });
-  } else if (state.step.startsWith('exp_')) {
+	} else if (state.step.startsWith('exp_')) {
     const expInput = ctx.message.text.trim();
     if (!/^\d+$/.test(expInput)) {
       return ctx.reply('🚫 *Masa aktif tidak valid. Masukkan angka yang valid.*', { parse_mode: 'Markdown' });
     }
+
     const exp = parseInt(expInput, 10);
-    if (isNaN(exp) || exp <= 0) {
-      return ctx.reply('🚫 *Masa aktif tidak valid. Masukkan angka yang valid.*', { parse_mode: 'Markdown' });
+    if (isNaN(exp) || exp <= 0 || exp > 365) {
+      return ctx.reply('🚫 *Masa aktif tidak boleh kurang dari 1 atau lebih dari 365 hari.*', { parse_mode: 'Markdown' });
     }
-    if (exp > 365) {
-      return ctx.reply('🚫 *Masa aktif tidak boleh lebih dari 365 hari.*', { parse_mode: 'Markdown' });
-    }
+
     state.exp = exp;
 
     db.get('SELECT quota, iplimit FROM Server WHERE id = ?', [state.serverId], async (err, server) => {
@@ -2513,74 +2779,87 @@ if (state.step === 'input_harga') {
           }
 
 		// Kurangi saldo pengguna
-		db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, ctx.from.id], (err) => {
+		db.run('UPDATE users SET saldo = saldo - ? WHERE user_id = ?', [totalHarga, ctx.from.id], async (err) => {
 		  if (err) {
-			console.error('⚠️ Kesalahan saat mengurangi saldo pengguna:', err.message);
-			return ctx.reply('🚫 *Terjadi kesalahan saat mengurangi saldo pengguna.*', { parse_mode: 'Markdown' });
+			console.error('⚠️ Gagal mengurangi saldo:', err.message);
+			return ctx.reply('🚫 *Gagal mengurangi saldo.*', { parse_mode: 'Markdown' });
 		  }
+		  try {
+			let msg = '';
+			let serverName = '';
 
-		  // ✅ Setelah saldo berhasil dikurangi, baru update total_create_akun
-		  db.run('UPDATE Server SET total_create_akun = total_create_akun + 1 WHERE id = ?', [serverId], (err) => {
-			if (err) {
-			  console.error('⚠️ Kesalahan saat menambahkan total_create_akun:', err.message);
-			  return ctx.reply('🚫 *Terjadi kesalahan saat menambahkan total_create_akun.*', { parse_mode: 'Markdown' });
+			if (action === 'create') {
+				// Tambah total akun server hanya jika exp lebih dari 30
+				db.run('UPDATE Server SET total_create_akun = total_create_akun + 1 WHERE id = ?', [serverId], (err) => {
+				  if (err) {
+					console.error('⚠️ Gagal update total akun server:', err.message);
+				  }
+				});
+
+			  // Jalankan fungsi create sesuai jenis
+			  if (type === 'vmess') {
+				msg = await createvmess(ctx.from.id, username, exp, quota, iplimit, serverId, hargaPerHari);
+			  } else if (type === 'vless') {
+				msg = await createvless(ctx.from.id, username, exp, quota, iplimit, serverId, hargaPerHari);
+			  } else if (type === 'trojan') {
+				msg = await createtrojan(ctx.from.id, username, exp, quota, iplimit, serverId, hargaPerHari);
+			  } else if (type === 'shadowsocks') {
+				msg = await createshadowsocks(ctx.from.id, username, exp, quota, iplimit, serverId, hargaPerHari);
+			  } else if (type === 'ssh') {
+				msg = await createssh(ctx.from.id, username, password, exp, iplimit, serverId, hargaPerHari);
+			  }
+
+			} else if (action === 'renew') {
+			  // Jalankan fungsi renew sesuai jenis
+			  if (type === 'ssh') {
+				msg = await renewssh(username, exp, iplimit, serverId);
+			  } else if (type === 'vmess') {
+				msg = await renewvmess(username, exp, quota, iplimit, serverId);
+			  } else if (type === 'vless') {
+				msg = await renewvless(username, exp, quota, iplimit, serverId);
+			  } else if (type === 'trojan') {
+				msg = await renewtrojan(username, exp, quota, iplimit, serverId);
+			  } else if (type === 'shadowsocks') {
+				msg = await renewshadowsocks(username, exp, quota, iplimit, serverId);
+			  }
+
+			  // Update data user_accounts
+			  await updateAccountRenewal(ctx.from.id, username, type, exp);
+			  await updateUserAccountCreation(ctx.from.id, exp);
 			}
 
-		  });
-		});
+			// Ambil nama server untuk notifikasi grup
+			const server = await new Promise((resolve, reject) => {
+			  db.get('SELECT nama_server FROM Server WHERE id = ?', [serverId], (err, row) => {
+				if (err || !row) reject(err);
+				else resolve(row);
+			  });
+			});
 
+			if (server) {
+			  serverName = server.nama_server;
+			  await sendGroupNotificationPurchase(
+				ctx.from.username,
+				ctx.from.id,
+				`${type.toUpperCase()} (${action.toUpperCase()})`,
+				serverName,
+				exp
+			  );
+			}
 
-          if (action === 'create') {
-  if (type === 'vmess') {
-    msg = await createvmess(username, exp, quota, iplimit, serverId);
-    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
-  } else if (type === 'vless') {
-    msg = await createvless(username, exp, quota, iplimit, serverId);
-    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
-  } else if (type === 'trojan') {
-    msg = await createtrojan(username, exp, quota, iplimit, serverId);
-    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
-  } else if (type === 'shadowsocks') {
-    msg = await createshadowsocks(username, exp, quota, iplimit, serverId);
-    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
-  } else if (type === 'ssh') {
-    msg = await createssh(username, password, exp, iplimit, serverId);
-    await updateUserAccountCreation(ctx.from.id); // Tambahkan ini
-  }
-}else if (action === 'renew') {
-            if (type === 'vmess') {
-              msg = await renewvmess(username, exp, quota, iplimit, serverId);
-            } else if (type === 'vless') {
-              msg = await renewvless(username, exp, quota, iplimit, serverId);
-            } else if (type === 'trojan') {
-              msg = await renewtrojan(username, exp, quota, iplimit, serverId);
-            } else if (type === 'shadowsocks') {
-              msg = await renewshadowsocks(username, exp, quota, iplimit, serverId);
-            } else if (type === 'ssh') {
-              msg = await renewssh(username, exp, iplimit, serverId);
-            }
-          }
+			// Kirim balasan ke user
+			await ctx.reply(msg, { parse_mode: 'Markdown' });
 
-          // Kirim notifikasi ke grup setelah akun berhasil dibuat
-          const server = await new Promise((resolve, reject) => {
-            db.get('SELECT nama_server FROM Server WHERE id = ?', [serverId], (err, row) => {
-              if (err) {
-                reject(err);
-              } else {
-                resolve(row);
-              }
-            });
+		  } catch (error) {
+			console.error('❌ Error saat create/renew:', error);
+			await ctx.reply('🚫 *Terjadi kesalahan saat membuat atau memperpanjang akun.*', { parse_mode: 'Markdown' });
+		  } finally {
+			delete userState[ctx.chat.id]; // ✨ Hapus state setelah semua proses selesai
+		  }
           });
-
-          if (server) {
-            await sendGroupNotificationPurchase(ctx.from.username, ctx.from.id, type, server.nama_server, exp);
-          }
-
-          await ctx.reply(msg, { parse_mode: 'Markdown' });
-          delete userState[ctx.chat.id];
-        });
       });
     });
+});
   } else if (state.step === 'addserver_domain') {
     const domain = ctx.message.text.trim();
     if (!domain) {
@@ -2681,6 +2960,7 @@ if (state.step === 'input_harga') {
     delete userState[ctx.chat.id];
   }
 });
+
 
 
 bot.action('addserver', async (ctx) => {
@@ -4013,31 +4293,56 @@ async function handleEditField(ctx, userStateData, data, field, fieldName, query
 }
 async function updateUserSaldo(id, saldo) {
   return new Promise((resolve, reject) => {
-    // Ambil user_id Telegram dari ID database
-    db.get('SELECT user_id FROM Users WHERE id = ?', [id], (err, row) => {
+    db.get('SELECT user_id, sudah_dapat_bonus_first FROM users WHERE id = ?', [id], async (err, row) => {
       if (err || !row) {
         console.error('⚠️ Gagal ambil user_id dari database:', err?.message || 'Data tidak ditemukan');
         return reject(err || new Error('User tidak ditemukan'));
       }
 
       const userTelegramId = row.user_id;
+      const sudahDapatBonus = row.sudah_dapat_bonus_first;
 
-      db.run('UPDATE Users SET saldo = saldo + ? WHERE id = ?', [saldo, id], function (err) {
+console.log('🔍 Saldo sebelum parse:', saldo, '| Tipe:', typeof saldo);
+const depositAsNumber = parseInt(saldo);
+console.log('✅ Saldo setelah parse:', depositAsNumber, '| Tipe:', typeof depositAsNumber);
+
+const bonus = parseInt(await cekDanHitungBonusDeposit(userTelegramId, depositAsNumber), 10);
+console.log('🎁 Bonus:', bonus, '| Tipe:', typeof bonus);
+
+		// Hitung saldo total yg akan ditambahkan
+		const totalSaldo = depositAsNumber + bonus;
+
+
+      // Update saldo & bonus jika ada
+      let updateQuery = 'UPDATE users SET saldo = saldo + ?';
+      const params = [totalSaldo];
+
+      if (bonus > 0 && sudahDapatBonus === 0) {
+        updateQuery += ', sudah_dapat_bonus_first = 1';
+      }
+
+      updateQuery += ' WHERE id = ?';
+      params.push(id);
+
+      db.run(updateQuery, params, function (err) {
         if (err) {
           console.error('⚠️ Kesalahan saat menambahkan saldo user:', err.message);
           return reject(err);
         }
 
-        // ✅ Kirim notifikasi ke user telegram
-        bot.telegram.sendMessage(
-          userTelegramId,
-          `💰 *Saldo berhasil ditambahkan!*\n\n📥 Tambahan: *Rp ${saldo.toLocaleString('id-ID')}*\n📊 Silakan cek saldo Anda sekarang.`,
-          { parse_mode: 'Markdown' }
-        ).catch(e => {
-          console.warn('⚠️ Gagal kirim notifikasi ke user:', e.message);
-        });
+        // Kirim notifikasi ke user Telegram
+		let pesan = `💰 *Saldo berhasil ditambahkan!*\n\n📥 Tambahan: *Rp ${saldo.toLocaleString('id-ID')}*`;
 
-        console.log(`✅ Saldo Rp ${saldo} berhasil ditambahkan ke user DB ID ${id} (Telegram ID ${userTelegramId})`);
+		if (bonus > 0) {
+		  pesan += `\n🎁 Bonus: *Rp ${bonus.toLocaleString('id-ID')}*`;
+		  pesan += `\n💰 Total Masuk: *Rp ${(saldo + bonus).toLocaleString('id-ID')}*`;
+		}
+
+
+        bot.telegram.sendMessage(userTelegramId, pesan, { parse_mode: 'Markdown' })
+          .catch(e => console.warn('⚠️ Gagal kirim notifikasi ke user:', e.message));
+
+        console.log(`✅ Total Rp ${totalSaldo} berhasil ditambahkan ke user ID ${id} (Telegram ID ${userTelegramId})`);
         resolve();
       });
     });
