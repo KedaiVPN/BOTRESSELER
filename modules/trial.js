@@ -119,11 +119,28 @@ async function trialssh(serverId, usernameTelegram) {
 │ *Username* : \`${sshData.username}\`
 │ *Password* : \`${sshData.password}\`
 │ *Domain*   : \`${sshData.domain}\`
+│ *Port TLS* : \`443\`
+│ *Port HTTP*: \`80\`
+│ *OpenSSH*  : \`22\`
+│ *UdpSSH*   : \`1-65535\`
+│ *DNS*      : \`443, 53, 22\`
+│ *Dropbear* : \`443, 109\`
 │ *SSH WS*   : \`80\`
 │ *SSH SSL WS*: \`443\`
+│ *SSL/TLS*  : \`443\`
+│ *OVPN SSL* : \`443\`
+│ *OVPN TCP* : \`1194\`
+│ *OVPN UDP* : \`2200\`
+│ *BadVPN UDP*: \`7100, 7300, 7300\`
 └─────────────────────
-🔗 *Detail account trial*
+🔗 *Link dan Payload*
 ───────────────────────
+Payload      : 
+\`
+GET / HTTP/1.1
+Host: ${sshData.domain}
+Upgrade: websocket
+\`
 Format Account WS: 
 \`
 ${sshData.domain}:80@${sshData.username}:${sshData.password}
@@ -142,7 +159,7 @@ ${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
 │ IP Limit: \`${sshData.ip_limit}\`
 └─────────────────────
 
-ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
+✿Terimakasih Telah Menggunakan layanan kami!✿
 `;
               console.log('SSH account created successfully');
               return resolve(msg);
@@ -246,7 +263,7 @@ ${vmessData.uuid}
 │ IP Limit: \`${vmessData.ip_limit === '0' ? 'Unlimited' : vmessData.ip_limit} \`
 └─────────────────────
 Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessData.username}.txt)
-ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
+✿Terimakasih Telah Menggunakan Layanan Kami!✿
 `;
               console.log('VMess account created successfully');
               return resolve(msg);
@@ -358,7 +375,7 @@ ${vlessData.uuid}
 │ IP Limit: \`${vlessData.ip_limit === '0' ? 'Unlimited' : vlessData.ip_limit} IP\`
 └─────────────────────
 Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessData.username}.txt)
-ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
+✿Terimakasih Telah Menggunakan Layanan Kami!✿
 `;
               console.log('VLESS account created successfully');
               return resolve(msg);
@@ -471,7 +488,7 @@ ${trojanData.uuid}
 │ IP Limit: \`${trojanData.ip_limit === '0' ? 'Unlimited' : trojanData.ip_limit} \`
 └─────────────────────
 Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${trojanData.username}.txt)
-ᥫᩣ𝒯ℯ𝓇𝒾𝓂𝒶𝓀𝒶𝓈𝒾𝒽 𝒯ℯ𝓁𝒶𝒽 ℳℯ𝓃ℊℊ𝓊𝓃𝒶𝓀𝒶𝓃 ℒ𝒶𝓎𝒶𝓃𝒶𝓃 𝒦𝒶𝓂𝒾ᥫᩣ
+✿Terimakasih  Telah menggunakan layanan kami!✿
 `;
               console.log('Trojan account created successfully');
               return resolve(msg);
