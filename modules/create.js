@@ -27,7 +27,7 @@ async function createssh(userId, username, password, exp, iplimit, serverId, har
             const msg = `
 🌟 *AKUN SSH PREMIUM* 🌟
 
-🔹 *Informasi Akun*
+🔹 *Informasi Akun Anda*
 ┌─────────────────────
 │ *Username* : \`${sshData.username}\`
 │ *Password* : \`${sshData.password}\`
@@ -37,7 +37,7 @@ async function createssh(userId, username, password, exp, iplimit, serverId, har
 │ *SSH WS*   : \`80\`
 │ *SSH SSL WS*: \`443\`
 └─────────────────────
-🔗 *Link dan Payload*
+🔗 *DETAIL ACCOUNT*
 ───────────────────────
 Format Account WS: 
 \`${sshData.domain}:80@${sshData.username}:${sshData.password}\`
@@ -90,7 +90,7 @@ async function createvmess(userId, username, exp, quota, limitip, serverId, harg
             const msg = `
 🌟 *AKUN VMESS PREMIUM* 🌟
 
-🔹 *Informasi Akun*
+🔹 *Informasi Akun Anda*
 ┌─────────────────────
 │ *Username* : \`${vmessData.username}\`
 │ *Domain*   : \`${vmessData.domain}\`
@@ -154,7 +154,7 @@ async function createvless(userId, username, exp, quota, limitip, serverId, harg
             const msg = `
 🌟 *AKUN VLESS PREMIUM* 🌟
 
-🔹 *Informasi Akun*
+🔹 *Informasi Akun Anda*
 ┌─────────────────────
 │ *Username* : \`${vlessData.username}\`
 │ *Domain*   : \`${vlessData.domain}\`
@@ -218,7 +218,7 @@ async function createtrojan(userId, username, exp, quota, limitip, serverId, har
             const msg = `
 🌟 *AKUN TROJAN PREMIUM* 🌟
 
-🔹 *Informasi Akun*
+🔹 *Informasi Akun Anda*
 ┌─────────────────────
 │ *Username* : \`${trojanData.username}\`
 │ *Domain*   : \`${trojanData.domain}\`
@@ -281,7 +281,7 @@ async function createshadowsocks(userId, username, exp, quota, limitip, serverId
             const msg = `
 🌟 *AKUN SHADOWSOCKS PREMIUM* 🌟
 
-🔹 *Informasi Akun*
+🔹 *Informasi Akun Anda*
 ┌─────────────────────
 │ *Username* : \`${shadowsocksData.username}\`
 │ *Domain*   : \`${shadowsocksData.domain}\`
