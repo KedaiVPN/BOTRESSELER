@@ -104,10 +104,13 @@ async function createvmess(userId, username, exp, quota, limitip, serverId, harg
 └─────────────────────
 🔐 *URL VMESS TLS*
 \`${vmessData.vmess_tls_link}\`
+──────────────────────
 🔓 *URL VMESS HTTP*
 \`${vmessData.vmess_nontls_link}\`
+──────────────────────
 🔒 *URL VMESS GRPC*
 \`${vmessData.vmess_grpc_link}\`
+──────────────────────
 🔒 *UUID*
 \`${vmessData.uuid}\`
 ┌─────────────────────
@@ -165,10 +168,13 @@ async function createvless(userId, username, exp, quota, limitip, serverId, harg
 └─────────────────────
 🔐 *URL VLESS TLS*
 \`${vlessData.vless_tls_link}\`
+──────────────────────
 🔓 *URL VLESS HTTP*
 \`${vlessData.vless_nontls_link}\`
+──────────────────────
 🔒 *URL VLESS GRPC*
 \`${vlessData.vless_grpc_link}\`
+──────────────────────
 🔒 *UUID*
 \`${vlessData.uuid}\`
 ┌─────────────────────
@@ -225,10 +231,13 @@ async function createtrojan(userId, username, exp, quota, limitip, serverId, har
 └─────────────────────
 🔐 *URL TROJAN TLS*
 \`${trojanData.trojan_tls_link}\`
+──────────────────────
 🔐 *URL TROJAN HTTP*
 \`${trojanData.trojan_nontls_link1}\`
+──────────────────────
 🔒 *URL TROJAN GRPC*
 \`${trojanData.trojan_grpc_link}\`
+──────────────────────
 🔒 *PASSWORD*
 \`${trojanData.uuid}\`
 ┌─────────────────────
@@ -286,8 +295,10 @@ async function createshadowsocks(userId, username, exp, quota, limitip, serverId
 └─────────────────────
 🔐 *URL SHADOWSOCKS TLS*
 \`${shadowsocksData.ss_link_ws}\`
+──────────────────────
 🔒 *URL SHADOWSOCKS GRPC*
 \`${shadowsocksData.ss_link_grpc}\`
+──────────────────────
 🔒 *UUID*
 \`${shadowsocksData.uuid}\`
 ┌─────────────────────
