@@ -11,6 +11,8 @@ const bugOptions = [
   { label: 'XL VIU WC', value: 'zaintest.vuclip.com', wildcard: true },
   { label: 'XL FB', value: 'investor.fb.com', wildcard: true },
   { label: 'XL XCV WC', value: 'ava.game.naver.com', wildcard: true },
+  { label: 'XL IFLIX LIVE', value: 'live.iflix.com', wildcard: false },
+  { label: 'XL IFLIX VPLAY', value: 'vplay.iflix.com', wildcard: false },
   { label: 'ISAT EDU WEBEX WC', value: 'blog.webex.com', wildcard: true },
   { label: 'CONFRECE ZOOM WS', value: 'support.zoom.us', wildcard: true },
   { label: 'IG WC', value: 'graph.instagram.com', wildcard: true },
