@@ -39,10 +39,6 @@ async function createssh(userId, username, password, exp, iplimit, serverId, har
 └─────────────────────
 🔗 *Link dan Payload*
 ───────────────────────
-Payload      : 
-\`GET / HTTP/1.1
-Host: ${sshData.domain}
-Upgrade: websocket\`
 Format Account WS: 
 \`${sshData.domain}:80@${sshData.username}:${sshData.password}\`
 Format Account TLS: 
@@ -115,7 +111,7 @@ async function createvmess(userId, username, exp, quota, limitip, serverId, harg
 ┌─────────────────────
 │ Expiry: \`${vmessData.expired}\`
 │ Quota: \`${vmessData.quota === '0 GB' ? 'Unlimited' : vmessData.quota}\`
-│ IP Limit: \`${vmessData.ip_limit === '0' ? 'Unlimited' : vmessData.ip_limit} IP\`
+│ IP Limit: \`${vmessData.ip_limit === '0' ? 'Unlimited' : vmessData.ip_limit}\`
 └─────────────────────
 Save Account Link: [Save Account](https://${vmessData.domain}:81/vmess-${vmessData.username}.txt)
 ♨ᵗᵉʳⁱᵐᵃᵏᵃˢⁱʰ ᵗᵉˡᵃʰ ᵐᵉⁿᵍᵍᵘⁿᵃᵏᵃⁿ ˡᵃʸᵃⁿᵃⁿ ᵏᵃᵐⁱ♨
@@ -176,7 +172,7 @@ async function createvless(userId, username, exp, quota, limitip, serverId, harg
 ┌─────────────────────
 │ Expiry: \`${vlessData.expired}\`
 │ Quota: \`${vlessData.quota === '0 GB' ? 'Unlimited' : vlessData.quota}\`
-│ IP Limit: \`${vlessData.ip_limit === '0' ? 'Unlimited' : vlessData.ip_limit} IP\`
+│ IP Limit: \`${vlessData.ip_limit === '0' ? 'Unlimited' : vlessData.ip_limit}\`
 └─────────────────────
 Save Account Link: [Save Account](https://${vlessData.domain}:81/vless-${vlessData.username}.txt)
 ♨ᵗᵉʳⁱᵐᵃᵏᵃˢⁱʰ ᵗᵉˡᵃʰ ᵐᵉⁿᵍᵍᵘⁿᵃᵏᵃⁿ ˡᵃʸᵃⁿᵃⁿ ᵏᵃᵐⁱ♨
@@ -236,7 +232,7 @@ async function createtrojan(userId, username, exp, quota, limitip, serverId, har
 ┌─────────────────────
 │ Expiry: \`${trojanData.expired}\`
 │ Quota: \`${trojanData.quota === '0 GB' ? 'Unlimited' : trojanData.quota}\`
-│ IP Limit: \`${trojanData.ip_limit === '0' ? 'Unlimited' : trojanData.ip_limit} IP\`
+│ IP Limit: \`${trojanData.ip_limit === '0' ? 'Unlimited' : trojanData.ip_limit}\`
 └─────────────────────
 Save Account Link: [Save Account](https://${trojanData.domain}:81/trojan-${trojanData.username}.txt)
 ♨ᵗᵉʳⁱᵐᵃᵏᵃˢⁱʰ ᵗᵉˡᵃʰ ᵐᵉⁿᵍᵍᵘⁿᵃᵏᵃⁿ ˡᵃʸᵃⁿᵃⁿ ᵏᵃᵐⁱ♨
@@ -295,7 +291,7 @@ async function createshadowsocks(userId, username, exp, quota, limitip, serverId
 ┌─────────────────────
 │ Expiry: \`${shadowsocksData.expired}\`
 │ Quota: \`${shadowsocksData.quota === '0 GB' ? 'Unlimited' : shadowsocksData.quota}\`
-│ IP Limit: \`${shadowsocksData.ip_limit === '0' ? 'Unlimited' : shadowsocksData.ip_limit} IP\`
+│ IP Limit: \`${shadowsocksData.ip_limit === '0' ? 'Unlimited' : shadowsocksData.ip_limit}\`
 └─────────────────────
 Save Account Link: [Save Account](https://${shadowsocksData.domain}:81/shadowsocks-${shadowsocksData.username}.txt)
 ♨ᵗᵉʳⁱᵐᵃᵏᵃˢⁱʰ ᵗᵉˡᵃʰ ᵐᵉⁿᵍᵍᵘⁿᵃᵏᵃⁿ ˡᵃʸᵃⁿᵃⁿ ᵏᵃᵐⁱ♨
