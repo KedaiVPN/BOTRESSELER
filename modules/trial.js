@@ -111,9 +111,9 @@ async function trialssh(serverId, usernameTelegram) {
               return resolve(`❌ ${error.message}`);
             }*/
             const msg = `
-──────────────────────
-✿ *CREATE TRIAL SSH SUCCESS*✿
-──────────────────────
+──────────────────────────────
+✿ *TRIAL SSH SUCCESSFULLY CREATED*✿
+──────────────────────────────
 🔹 *Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${sshData.username}\`
@@ -125,17 +125,13 @@ async function trialssh(serverId, usernameTelegram) {
 🔗 *Link dan Payload*
 ───────────────────────
 Format Account WS: 
-\`
-${sshData.domain}:80@${sshData.username}:${sshData.password}
-\`
+\`${sshData.domain}:80@${sshData.username}:${sshData.password}\`
+───────────────────────
 Format Account TLS: 
-\`
-${sshData.domain}:443@${sshData.username}:${sshData.password}
-\`
+\`${sshData.domain}:443@${sshData.username}:${sshData.password}\`
+───────────────────────
 Format Account UDP: 
-\`
-${sshData.domain}:1-65535@${sshData.username}:${sshData.password}
-\`
+\`${sshData.domain}:1-65535@${sshData.username}:${sshData.password}\`
 ───────────────────────
 ┌─────────────────────
 │ Expires: \`${sshData.expired}\`
@@ -206,9 +202,9 @@ async function trialvmess(serverId, usernameTelegram) {
               return resolve(`❌ ${error.message}`);
             }*/
             const msg = `
-──────────────────────
-✿ *CREATE TRIAL VMESS SUCCESS*✿
-──────────────────────
+────────────────────────────────
+✿ *TRIAL VMESS SUCCESSFULLY CREATED*✿
+────────────────────────────────
 🔹 *Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${vmessData.username}\`
@@ -222,24 +218,16 @@ async function trialvmess(serverId, usernameTelegram) {
 │ *Path GRPC*: \`vmess-grpc\`
 └─────────────────────
 ✿ *URL VMESS TLS*
-\`
-${vmessData.vmess_tls_link}
-\`
+\`${vmessData.vmess_tls_link}\`
 ──────────────────────
 ✿ *URL VMESS HTTP*
-\`
-${vmessData.vmess_nontls_link}
-\`
+\`${vmessData.vmess_nontls_link}\`
 ──────────────────────
 ✿ *URL VMESS GRPC*
-\`
-${vmessData.vmess_grpc_link}
-\`
+\`${vmessData.vmess_grpc_link}\`
 ──────────────────────
 ✿ *UUID*
-\`
-${vmessData.uuid}
-\`
+\`${vmessData.uuid}\`
 ┌─────────────────────
 │ Expiry: \`${vmessData.expired}\`
 │ Quota: \`${vmessData.quota === '0 GB' ? 'Unlimited' : vmessData.quota}\`
@@ -318,9 +306,9 @@ async function trialvless(serverId, usernameTelegram) {
               return resolve(`❌ ${error.message}`);
             }*/
             const msg = `
-──────────────────────
-✿ *CREATE TRIAL VLESS SUCCESS*✿
-──────────────────────
+────────────────────────────────
+✿ *TRIAL VLESS SUCCESSFULLY CREATED*✿
+────────────────────────────────
 🔹 *Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${vlessData.username}\`
@@ -334,24 +322,16 @@ async function trialvless(serverId, usernameTelegram) {
 │ *Path GRPC*: \`vless-grpc\`
 └─────────────────────
 ✿ *URL VLESS TLS*
-\`
-${vlessData.vless_tls_link}
-\`
+\`${vlessData.vless_tls_link}\`
 ──────────────────────
 ✿ *URL VLESS HTTP*
-\`
-${vlessData.vless_nontls_link}
-\`
+\`${vlessData.vless_nontls_link}\`
 ──────────────────────
 ✿ *URL VLESS GRPC*
-\`
-${vlessData.vless_grpc_link}
-\`
+\`${vlessData.vless_grpc_link}\`
 ──────────────────────
 ✿ *UUID*
-\`
-${vlessData.uuid}
-\`
+\`${vlessData.uuid}\`
 ┌─────────────────────
 │ Expiry: \`${vlessData.expired}\`
 │ Quota: \`${vlessData.quota === '0 GB' ? 'Unlimited' : vlessData.quota}\`
@@ -432,9 +412,9 @@ async function trialtrojan(serverId, usernameTelegram) {
               return resolve(`❌ ${error.message}`);
             }*/
             const msg = `
-──────────────────────
-✿ *CREATE TRIAL TROJAN SUCCESS*✿
-──────────────────────
+─────────────────────────────────
+✿ *TRIAL TROJAN SUCCESSFULLY CREATED*✿
+─────────────────────────────────
 🔹 *Informasi Akun*
 ┌─────────────────────
 │ *Username* : \`${trojanData.username}\`
@@ -447,24 +427,16 @@ async function trialtrojan(serverId, usernameTelegram) {
 │ *Path GRPC*: \`trojan-grpc\`
 └─────────────────────
 ✿ *URL TROJAN TLS*
-\`
-${trojanData.trojan_tls_link}
-\`
+\`${trojanData.trojan_tls_link}\`
 ──────────────────────
 ✿ *URL TROJAN HTTP*
-\`
-${trojanData.trojan_nontls_link1}
-\`
+\`${trojanData.trojan_nontls_link1}\`
 ──────────────────────
 ✿ *URL TROJAN GRPC*
-\`
-${trojanData.trojan_grpc_link}
-\`
+\`${trojanData.trojan_grpc_link}\`
 ──────────────────────
 ✿ *PASSWORD*
-\`
-${trojanData.uuid}
-\`
+\`${trojanData.uuid}\`
 ┌─────────────────────
 │ Expiry: \`${trojanData.expired}\`
 │ Quota: \`${trojanData.quota === '0 GB' ? 'Unlimited' : trojanData.quota}\`
