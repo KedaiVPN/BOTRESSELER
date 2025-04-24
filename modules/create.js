@@ -41,8 +41,10 @@ async function createssh(userId, username, password, exp, iplimit, serverId, har
 ───────────────────────
 Format Account WS: 
 \`${sshData.domain}:80@${sshData.username}:${sshData.password}\`
+───────────────────────
 Format Account TLS: 
 \`${sshData.domain}:443@${sshData.username}:${sshData.password}\`
+───────────────────────
 Format Account UDP: 
 \`${sshData.domain}:1-65535@${sshData.username}:${sshData.password}\`
 ───────────────────────
