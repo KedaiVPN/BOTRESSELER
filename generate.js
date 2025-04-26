@@ -13,7 +13,7 @@ const bugOptions = [
   { label: 'XL XCV WC', value: 'ava.game.naver.com', wildcard: true },
   { label: 'XL IFLIX [LIVE]', value: 'live.iflix.com', wildcard: false },
   { label: 'XL IFLIX [VPLAY]', value: 'vplay.iflix.com', wildcard: false },
-  { label: 'ISAT EDU WEBEX WC', value: 'blog.webex.com', wildcard: true },
+  { label: 'ISAT EDU [WEBEX] WC', value: 'blog.webex.com', wildcard: true },
   { label: 'ISAT FUN [NETFLIX] WC', value: 'cache.netflix.com', wildcard: true },
   { label: 'ISAT FUN [SPOTIFY] WC', value: 'investors.spotify.com', wildcard: true },
   { label: 'CONFRECE ZOOM WS', value: 'support.zoom.us', wildcard: true },
