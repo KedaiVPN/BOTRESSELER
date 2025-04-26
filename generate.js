@@ -11,14 +11,16 @@ const bugOptions = [
   { label: 'XL VIU WC', value: 'zaintest.vuclip.com', wildcard: true },
   { label: 'XL FB', value: 'investor.fb.com', wildcard: true },
   { label: 'XL XCV WC', value: 'ava.game.naver.com', wildcard: true },
-  { label: 'XL IFLIX LIVE', value: 'live.iflix.com', wildcard: false },
-  { label: 'XL IFLIX VPLAY', value: 'vplay.iflix.com', wildcard: false },
+  { label: 'XL IFLIX [LIVE]', value: 'live.iflix.com', wildcard: false },
+  { label: 'XL IFLIX [VPLAY]', value: 'vplay.iflix.com', wildcard: false },
   { label: 'ISAT EDU WEBEX WC', value: 'blog.webex.com', wildcard: true },
+  { label: 'ISAT FUN [NETFLIX] WC', value: 'cache.netflix.com', wildcard: true },
+  { label: 'ISAT FUN [SPOTIFY] WC', value: 'investors.spotify.com', wildcard: true },
   { label: 'CONFRECE ZOOM WS', value: 'support.zoom.us', wildcard: true },
   { label: 'IG WC', value: 'graph.instagram.com', wildcard: true },
-  { label: 'TSEL ILPED WC Bakrie', value: 'bakrie.ac.id', wildcard: true },
-  { label: 'TSEL ILPED WC Unes', value: 'unnes.ac.id', wildcard: true },
-  { label: 'TSEL ILPED WC midtrans', value: 'api.midtrans.com', wildcard: true },
+  { label: 'TSEL ILPED [Bakrie] WC', value: 'bakrie.ac.id', wildcard: true },
+  { label: 'TSEL ILPED [Unes] WC', value: 'unnes.ac.id', wildcard: true },
+  { label: 'TSEL ILPED [midtrans] WC', value: 'api.midtrans.com', wildcard: true },
   { label: 'RUANGGURU WC', value: 'ads.ruangguru.com', wildcard: true }
 ];
 
