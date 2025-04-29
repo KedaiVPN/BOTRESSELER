@@ -18,7 +18,6 @@ const bugOptions = [
   { label: 'ISAT FUN [SPOTIFY] WC', value: 'investors.spotify.com', wildcard: true },
   { label: 'CONFRECE ZOOM WS', value: 'support.zoom.us', wildcard: true },
   { label: 'IG WC', value: 'graph.instagram.com', wildcard: true },
-  { label: 'TSEL ILPED [BAKRIE] WC', value: 'bakrie.ac.id', wildcard: true },
   { label: 'TSEL ILPED [CHAT] WC', value: 'chat.sociomile.com', wildcard: true },
   { label: 'TSEL ILPED [UNES] WC', value: 'unnes.ac.id', wildcard: true },
   { label: 'TSEL ILPED [MIDTRANS] WC', value: 'api.midtrans.com', wildcard: true },
