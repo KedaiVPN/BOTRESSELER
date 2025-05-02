@@ -10,7 +10,7 @@ const bugOptions = [
   { label: 'XL EDU', value: '104.17.3.81', wildcard: false },
   { label: 'XL VIU WC', value: 'zaintest.vuclip.com', wildcard: true },
   { label: 'XL FB', value: 'investor.fb.com', wildcard: true },
-  { label: 'XL XCV WC', value: 'ava.game.naver.com', wildcard: true },
+  { label: 'XL XC/V/S/B [AVA] WC', value: 'ava.game.naver.com', wildcard: true },
   { label: 'XL IFLIX [LIVE]', value: 'live.iflix.com', wildcard: false },
   { label: 'XL IFLIX [VPLAY]', value: 'vplay.iflix.com', wildcard: false },
   { label: 'ISAT EDU [WEBEX] WC', value: 'blog.webex.com', wildcard: true },
