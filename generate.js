@@ -19,8 +19,9 @@ const bugOptions = [
   { label: 'CONFRECE ZOOM WS', value: 'support.zoom.us', wildcard: true },
   { label: 'IG WC', value: 'graph.instagram.com', wildcard: true },
   { label: 'TSEL ILPED [CHAT] WC', value: 'chat.sociomile.com', wildcard: true },
+  { label: 'TSEL ILPED [GANECA] WC', value: 'ganecadigital.com', wildcard: true },
   { label: 'TSEL ILPED [UNES] WC', value: 'unnes.ac.id', wildcard: true },
-  { label: 'TSEL ILPED [MIDTRANS] WC', value: 'api.midtrans.com', wildcard: true },
+  { label: 'TSEL ILPED [UNTAR] WC', value: 'untar.ac.id', wildcard: true },
   { label: 'RUANGGURU WC', value: 'ads.ruangguru.com', wildcard: true }
 ];
 
