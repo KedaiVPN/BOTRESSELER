@@ -6,7 +6,7 @@ const accountCache = new Map();
 
 // Opsi bug: label, value, wildcard (true jika ingin gunakan add + host + sni)
 const bugOptions = [
-  { label: 'AXIS EDU [CHAT] WC', value: 'chat.sociomile.com', wildcard: true },
+  { label: 'AXIS EDU [CHAT] WC', value: 'chat.sociomile.com', wildcard: false },
   { label: 'XL VIDIO', value: 'quiz.vidio.com', wildcard: false },
   { label: 'XL EDU', value: '104.17.3.81', wildcard: false },
   { label: 'XL VIU WC', value: 'zaintest.vuclip.com', wildcard: true },
