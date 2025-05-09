@@ -1474,7 +1474,7 @@ bot.command('addsaldo', async (ctx) => {
       }
 
       // Cek & update role jika memenuhi syarat
-      if (totalSaldo >= 25000) {
+      if (totalSaldo >= 250000) {
         await checkAndUpdateUserRole(targetUserId);
       }
 
