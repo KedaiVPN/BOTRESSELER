@@ -462,7 +462,7 @@ async function checkAndUpdateUserRole(userId) {
     const { saldo, role } = user;
 
     // Jika saldo >= 25.000 dan role bukan reseller, ubah role ke reseller
-    if (saldo >= 300000 && role !== 'reseller') {
+    if (saldo >= 25000 && role !== 'reseller') {
       await new Promise((resolve, reject) => {
         db.run('UPDATE users SET role = ? WHERE user_id = ?', ['reseller', userId], (err) => {
           if (err) {
@@ -1474,7 +1474,7 @@ bot.command('addsaldo', async (ctx) => {
       }
 
       // Cek & update role jika memenuhi syarat
-      if (totalSaldo >= 300000) {
+      if (totalSaldo >= 25000) {
         await checkAndUpdateUserRole(targetUserId);
       }
 
