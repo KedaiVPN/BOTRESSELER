@@ -10,20 +10,20 @@ const bugOptions = [
   { label: 'XL VIDIO', value: 'quiz.vidio.com', wildcard: false },
   { label: 'XL EDU', value: '104.17.3.81', wildcard: false },
   { label: 'XL VIU WC', value: 'zaintest.vuclip.com', wildcard: true },
-  { label: 'XL FB', value: 'investor.fb.com', wildcard: true },
-  { label: 'XL XC/V/S/B [AVA] WC', value: 'ava.game.naver.com', wildcard: true },
-  { label: 'XL IFLIX [LIVE]', value: 'live.iflix.com', wildcard: false },
-  { label: 'XL IFLIX [VPLAY]', value: 'vplay.iflix.com', wildcard: false },
+  { label: 'XL KERE HORE [AVA] WC', value: 'ava.game.naver.com', wildcard: true },
+  { label: 'XL IFLIX [LIVE] SALTO', value: 'live.iflix.com', wildcard: false },
+  { label: 'XL IFLIX [VPLAY] SALTO', value: 'vplay.iflix.com', wildcard: false },
+  { label: 'XL FB SALTO', value: 'edge-ig-mqtt-p4-shv-sin6.facebook.com', wildcard: false },
+  { label: 'XL IG SALTO', value: 'graph.instagram.com', wildcard: false },
   { label: 'ISAT EDU [WEBEX] WC', value: 'blog.webex.com', wildcard: true },
   { label: 'ISAT FUN [NETFLIX] WC', value: 'cache.netflix.com', wildcard: true },
   { label: 'ISAT FUN [SPOTIFY] WC', value: 'investors.spotify.com', wildcard: true },
   { label: 'CONFRECE ZOOM WS', value: 'support.zoom.us', wildcard: true },
-  { label: 'IG WC', value: 'graph.instagram.com', wildcard: true },
   { label: 'TSEL ILPED [CHAT] WC', value: 'chat.sociomile.com', wildcard: true },
   { label: 'TSEL ILPED [GANECA] WC', value: 'ganecadigital.com', wildcard: true },
   { label: 'TSEL ILPED [UNES] WC', value: 'unnes.ac.id', wildcard: true },
   { label: 'TSEL ILPED [UNTAR] WC', value: 'untar.ac.id', wildcard: true },
-  { label: 'RUANGGURU WC', value: 'ads.ruangguru.com', wildcard: true }
+  { label: 'TSEL RG', value: '172.67.23.144', wildcard: false }
 ];
 
 function parseVMess(uri) {
