@@ -6,23 +6,19 @@ const accountCache = new Map();
 
 // Opsi bug: label, value, wildcard (true jika ingin gunakan add + host + sni)
 const bugOptions = [
-  { label: 'AXIS EDU [CHAT] WC', value: 'chat.sociomile.com', wildcard: false },
-  { label: 'XL VIDIO', value: 'quiz.vidio.com', wildcard: false },
+  { label: 'XL VIDIO PORT 443', value: 'quiz.vidio.com', wildcard: false },
   { label: 'XL EDU', value: '104.17.3.81', wildcard: false },
   { label: 'XL VIU WC', value: 'zaintest.vuclip.com', wildcard: true },
-  { label: 'XL KERE HORE [AVA] WC', value: 'ava.game.naver.com', wildcard: true },
+  { label: 'XL KERE HORE [AVA:443] WC', value: 'ava.game.naver.com', wildcard: true },
   { label: 'XL IFLIX [LIVE] SALTO', value: 'live.iflix.com', wildcard: false },
   { label: 'XL IFLIX [VPLAY] SALTO', value: 'vplay.iflix.com', wildcard: false },
   { label: 'XL FB SALTO', value: 'edge-ig-mqtt-p4-shv-sin6.facebook.com', wildcard: false },
   { label: 'XL IG SALTO', value: 'graph.instagram.com', wildcard: false },
-  { label: 'ISAT EDU [WEBEX] WC', value: 'blog.webex.com', wildcard: true },
+  { label: 'ISAT FUN [NETFLIX] PORT 80', value: 'creativeservices.netflix.com', wildcard: false },
   { label: 'ISAT FUN [NETFLIX] WC', value: 'cache.netflix.com', wildcard: true },
   { label: 'ISAT FUN [SPOTIFY] WC', value: 'investors.spotify.com', wildcard: true },
   { label: 'CONFRECE ZOOM WS', value: 'support.zoom.us', wildcard: true },
-  { label: 'TSEL ILPED [CHAT] WC', value: 'chat.sociomile.com', wildcard: true },
-  { label: 'TSEL ILPED [GANECA] WC', value: 'ganecadigital.com', wildcard: true },
-  { label: 'TSEL ILPED [UNES] WC', value: 'unnes.ac.id', wildcard: true },
-  { label: 'TSEL ILPED [UNTAR] WC', value: 'untar.ac.id', wildcard: true },
+  { label: 'TSEL ILPED [E42] PORT 443', value: '104.18.53.42', wildcard: false },
   { label: 'TSEL RG', value: '172.67.23.144', wildcard: false }
 ];
 
